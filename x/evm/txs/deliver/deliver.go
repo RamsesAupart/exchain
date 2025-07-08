@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/okex/exchain/x/evm/watcher"
 
 	"github.com/okex/exchain/app/refund"
 	sdk "github.com/okex/exchain/libs/cosmos-sdk/types"
@@ -12,7 +13,6 @@ import (
 	"github.com/okex/exchain/x/evm/keeper"
 	"github.com/okex/exchain/x/evm/txs/base"
 	"github.com/okex/exchain/x/evm/types"
-	"github.com/okex/exchain/x/evm/watcher"
 )
 
 type Tx struct {
@@ -49,23 +49,24 @@ func (tx *Tx) GetSenderAccount() authexported.Account {
 	return pm.AccountKeeper.GetAccount(infCtx, tx.StateTransition.Sender.Bytes())
 }
 
-func (tx *Tx) ResetWatcher(account authexported.Account) {
-	tx.Keeper.Watcher.Reset()
+// resetWatcher when panic reset watcher
+func (tx *Tx) resetWatcher(account authexported.Account) {
 	// delete account which is already in Watcher.batch
-	if account != nil {
-		tx.Keeper.Watcher.AddDelAccMsg(account, true)
+	if account != nil && tx.Ctx.GetWatcher().Enabled() {
+		tx.Ctx.GetWatcher().DeleteAccount(account)
 	}
 }
 
-func (tx *Tx) RefundFeesWatcher(account authexported.Account, ethereumTx *types.MsgEthereumTx) {
+// refundFeesWatcher fix account balance in watcher with refund fees
+func (tx *Tx) refundFeesWatcher(account authexported.Account, ethereumTx *types.MsgEthereumTx) {
 	// fix account balance in watcher with refund fees
-	if account == nil || !tx.Keeper.Watcher.Enabled() {
+	if account == nil || !tx.Ctx.GetWatcher().Enabled() {
 		return
 	}
 	defer func() {
 		//panic was not allowed in this function
 		if e := recover(); e != nil {
-			tx.Ctx.Logger().Error(fmt.Sprintf("recovered panic at func RefundFeesWatcher %v\n", e))
+			tx.Ctx.Logger().Error(fmt.Sprintf("recovered panic at func refundFeesWatcher %v\n", e))
 		}
 	}()
 	gasConsumed := tx.Ctx.GasMeter().GasConsumed()
@@ -77,9 +78,7 @@ func (tx *Tx) RefundFeesWatcher(account authexported.Account, ethereumTx *types.
 	fixedFees := refund.CalculateRefundFees(gasConsumed, ethereumTx.GetFee(), ethereumTx.Data.Price)
 	coins := account.GetCoins().Add2(fixedFees)
 	account.SetCoins(coins) //ignore err, no err will be returned in SetCoins
-
-	pm := tx.Keeper.GenerateCSDBParams()
-	pm.Watcher.SaveAccount(account, false)
+	tx.Ctx.GetWatcher().SaveAccount(account)
 }
 
 func (tx *Tx) Transition(config types.ChainConfig) (result base.Result, err error) {
@@ -97,6 +96,9 @@ func (tx *Tx) Commit(msg *types.MsgEthereumTx, result *base.Result) {
 	// update block bloom filter
 	if tx.Ctx.ParaMsg() == nil {
 		tx.Keeper.Bloom.Or(tx.Keeper.Bloom, result.ExecResult.Bloom)
+		tx.Keeper.Watcher.SaveTransactionReceipt(watcher.TransactionSuccess,
+			msg, *tx.StateTransition.TxHash,
+			tx.Keeper.Watcher.GetEvmTxIndex(), result.ResultData, tx.Ctx.GasMeter().GasConsumed())
 	} else {
 		// async mod goes immediately
 		index := tx.Keeper.LogsManages.Set(keeper.TxResult{
@@ -105,22 +107,30 @@ func (tx *Tx) Commit(msg *types.MsgEthereumTx, result *base.Result) {
 		tx.Ctx.ParaMsg().LogIndex = index
 	}
 	tx.Keeper.LogSize = tx.StateTransition.Csdb.GetLogSize()
-	tx.Keeper.Watcher.SaveTransactionReceipt(watcher.TransactionSuccess,
-		msg, *tx.StateTransition.TxHash,
-		tx.Keeper.Watcher.GetEvmTxIndex(), result.ResultData, tx.Ctx.GasMeter().GasConsumed())
-	if msg.Data.Recipient == nil {
+	if msg.Data.Recipient == nil && tx.Ctx.GetWatcher().Enabled() {
 		tx.StateTransition.Csdb.IteratorCode(func(addr common.Address, c types.CacheCode) bool {
-			tx.Keeper.Watcher.SaveContractCode(addr, c.Code)
-			tx.Keeper.Watcher.SaveContractCodeByHash(c.CodeHash, c.Code)
+			tx.Ctx.GetWatcher().SaveContractCode(addr, c.Code, uint64(tx.Ctx.BlockHeight()))
+			tx.Ctx.GetWatcher().SaveContractCodeByHash(c.CodeHash, c.Code)
 			return true
 		})
 	}
 }
 
-func (tx *Tx) FinalizeWatcher(account authexported.Account, err error) {
-	if err != nil {
-		tx.ResetWatcher(account)
+func (tx *Tx) FinalizeWatcher(msg *types.MsgEthereumTx, err error, panic bool) {
+	if !tx.Ctx.GetWatcher().Enabled() {
 		return
 	}
-	tx.Keeper.Watcher.Finalize()
+	account := tx.GetSenderAccount()
+	if panic {
+		tx.resetWatcher(account)
+		return
+	}
+	tx.refundFeesWatcher(account, msg)
+	// handle error
+	if err != nil {
+		// reset watcher
+		tx.resetWatcher(account)
+		return
+	}
+	tx.Ctx.GetWatcher().Finalize()
 }

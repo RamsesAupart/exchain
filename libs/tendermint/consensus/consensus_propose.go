@@ -3,12 +3,13 @@ package consensus
 import (
 	"bytes"
 	"fmt"
+	"strings"
+
 	cfg "github.com/okex/exchain/libs/tendermint/config"
 	cstypes "github.com/okex/exchain/libs/tendermint/consensus/types"
 	"github.com/okex/exchain/libs/tendermint/libs/automation"
 	"github.com/okex/exchain/libs/tendermint/p2p"
 	"github.com/okex/exchain/libs/tendermint/types"
-	"strings"
 )
 
 // SetProposal inputs a proposal.
@@ -27,9 +28,9 @@ func (cs *State) SetProposal(proposal *types.Proposal, peerID p2p.ID) error {
 // AddProposalBlockPart inputs a part of the proposal block.
 func (cs *State) AddProposalBlockPart(height int64, round int, part *types.Part, peerID p2p.ID) error {
 	if peerID == "" {
-		cs.internalMsgQueue <- msgInfo{&BlockPartMessage{height, round, part, nil}, ""}
+		cs.internalMsgQueue <- msgInfo{&BlockPartMessage{height, round, part}, ""}
 	} else {
-		cs.peerMsgQueue <- msgInfo{&BlockPartMessage{height, round, part, nil}, peerID}
+		cs.peerMsgQueue <- msgInfo{&BlockPartMessage{height, round, part}, peerID}
 	}
 
 	// TODO: wait for event?!
@@ -93,7 +94,11 @@ func (cs *State) enterPropose(height int64, round int) {
 
 	cs.initNewHeight()
 	isBlockProducer, bpAddr := cs.isBlockProducer()
-	cs.trc.Pin("enterPropose-%d-%s-%s", round, isBlockProducer, bpAddr)
+	newProposer := ""
+	if cs.vcHeight[height] != "" {
+		newProposer = "-avc-" + cs.vcHeight[height][:6]
+	}
+	cs.trc.Pin("enterPropose-%d-%s-%s%s", round, isBlockProducer, bpAddr, newProposer)
 
 	logger.Info(fmt.Sprintf("enterPropose(%v/%v). Current: %v/%v/%v", height, round, cs.Height, cs.Round, cs.Step))
 
@@ -111,7 +116,7 @@ func (cs *State) enterPropose(height int64, round int) {
 	}()
 
 	// If we don't get the proposal and all block parts quick enough, enterPrevote
-	cs.timeoutTicker.ScheduleTimeout(timeoutInfo{Duration: cs.config.Propose(round), Height: height, Round: round, Step: cstypes.RoundStepPropose, ActiveViewChange: cs.hasVC})
+	cs.timeoutTicker.ScheduleTimeout(timeoutInfo{Duration: cs.config.Propose(round), Height: height, Round: round, Step: cstypes.RoundStepPropose, ActiveViewChange: cs.HasVC})
 
 	if isBlockProducer == "y" {
 		logger.Info("enterPropose: Our turn to propose",
@@ -119,7 +124,9 @@ func (cs *State) enterPropose(height int64, round int) {
 			bpAddr,
 			"privValidator",
 			cs.privValidator)
-		cs.decideProposal(height, round)
+		if cs.vcHeight[height] == "" || cs.Round != 0 {
+			cs.decideProposal(height, round)
+		}
 	} else {
 		logger.Info("enterPropose: Not our turn to propose",
 			"proposer",
@@ -143,7 +150,11 @@ func (cs *State) defaultDecideProposal(height int64, round int) {
 		block, blockParts = cs.ValidBlock, cs.ValidBlockParts
 	} else {
 		// Create a new proposal block from state/txs from the mempool.
-		block, blockParts = cs.createProposalBlock()
+		if res := cs.getPreBlockResult(height); res != nil {
+			block, blockParts = res.block, res.blockParts
+		} else {
+			block, blockParts = cs.createProposalBlock()
+		}
 		if block == nil {
 			return
 		}
@@ -156,14 +167,14 @@ func (cs *State) defaultDecideProposal(height int64, round int) {
 	// Make proposal
 	propBlockID := types.BlockID{Hash: block.Hash(), PartsHeader: blockParts.Header()}
 	proposal := types.NewProposal(height, round, cs.ValidRound, propBlockID)
-	proposal.HasVC = cs.hasVC
+	proposal.HasVC = cs.HasVC
 	if err := cs.privValidator.SignProposal(cs.state.ChainID, proposal); err == nil {
 
 		// send proposal and block parts on internal msg queue
 		cs.sendInternalMessage(msgInfo{&ProposalMessage{proposal}, ""})
 		for i := 0; i < blockParts.Total(); i++ {
 			part := blockParts.GetPart(i)
-			cs.sendInternalMessage(msgInfo{&BlockPartMessage{cs.Height, cs.Round, part, cs.Deltas}, ""})
+			cs.sendInternalMessage(msgInfo{&BlockPartMessage{cs.Height, cs.Round, part}, ""})
 		}
 		cs.Logger.Info("Signed proposal", "height", height, "round", round, "proposal", proposal)
 		cs.Logger.Debug(fmt.Sprintf("Signed proposal block: %v", block))
@@ -342,8 +353,6 @@ func (cs *State) addProposalBlockPart(msg *BlockPartMessage, peerID p2p.ID) (add
 		if cs.prerunTx {
 			cs.blockExec.NotifyPrerun(cs.ProposalBlock)
 		}
-		// receive Deltas from BlockMessage and put into State(cs)
-		cs.Deltas = msg.Deltas
 		// NOTE: it's possible to receive complete proposal blocks for future rounds without having the proposal
 		cs.Logger.Info("Received complete proposal block", "height", cs.ProposalBlock.Height, "hash", cs.ProposalBlock.Hash())
 		cs.eventBus.PublishEventCompleteProposal(cs.CompleteProposalEvent())
@@ -352,18 +361,19 @@ func (cs *State) addProposalBlockPart(msg *BlockPartMessage, peerID p2p.ID) (add
 }
 
 func (cs *State) handleCompleteProposal(height int64) {
+	cs.Logger.Info("handleCompleteProposal", "height", cs.Height, "round", cs.Round, "step", cs.Step)
 	// Update Valid* if we can.
 	prevotes := cs.Votes.Prevotes(cs.Round)
 	blockID, hasTwoThirds := prevotes.TwoThirdsMajority()
-	if hasTwoThirds && !blockID.IsZero() && (cs.ValidRound < cs.Round) {
-		if cs.ProposalBlock.HashesTo(blockID.Hash) {
-			cs.Logger.Debug("Updating valid block to new proposal block",
-				"valid_round", cs.Round, "valid_block_hash", cs.ProposalBlock.Hash())
-			cs.ValidRound = cs.Round
-			cs.ValidBlock = cs.ProposalBlock
-			cs.ValidBlockParts = cs.ProposalBlockParts
-		}
+	prevoteBlockValid := hasTwoThirds && !blockID.IsZero() && (cs.ValidRound < cs.Round) && cs.ProposalBlock.HashesTo(blockID.Hash)
+	if prevoteBlockValid {
+		cs.Logger.Info("Updating valid block to new proposal block",
+			"valid_round", cs.Round, "valid_block_hash", cs.ProposalBlock.Hash())
+		cs.ValidRound = cs.Round
+		cs.ValidBlock = cs.ProposalBlock
+		cs.ValidBlockParts = cs.ProposalBlockParts
 		// TODO: In case there is +2/3 majority in Prevotes set for some
+		// if !cs.ProposalBlock.HashesTo(blockID.Hash) {}
 		// block and cs.ProposalBlock contains different block, either
 		// proposer is faulty or voting power of faulty processes is more
 		// than 1/3. We should trigger in the future accountability
@@ -376,7 +386,15 @@ func (cs *State) handleCompleteProposal(height int64) {
 		if hasTwoThirds { // this is optimisation as this will be triggered when prevote is added
 			cs.enterPrecommit(height, cs.Round)
 		}
-	} else if cs.Step == cstypes.RoundStepCommit {
+	}
+	if cs.HasVC && cs.Round == 0 {
+		blockID, hasTwoThirds := cs.Votes.Precommits(cs.Round).TwoThirdsMajority()
+		cs.Logger.Info("avc and handleCompleteProposal", "2/3Precommit", hasTwoThirds, "proposal", cs.ProposalBlock.Hash(), "block", blockID.Hash)
+		if hasTwoThirds && !blockID.IsZero() && cs.ProposalBlock.HashesTo(blockID.Hash) {
+			cs.updateRoundStep(cs.Round, cstypes.RoundStepCommit)
+		}
+	}
+	if cs.Step == cstypes.RoundStepCommit {
 		// If we're waiting on the proposal block...
 		cs.tryFinalizeCommit(height)
 	}

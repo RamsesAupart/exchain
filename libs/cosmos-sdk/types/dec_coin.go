@@ -1,6 +1,7 @@
 package types
 
 import (
+	"bytes"
 	"fmt"
 	"sort"
 	"strings"
@@ -171,6 +172,19 @@ func (coin DecCoin) TruncateDecimal() (Coin, DecCoin) {
 	return NewCoin(coin.Denom, truncated), NewDecCoinFromDec(coin.Denom, change)
 }
 
+// TruncateWithPrec returns a Coin with a truncated coin and a DecCoin for the
+// change with prec, Note, the change may be zero.
+func (coin DecCoin) TruncateWithPrec(prec int64) (Coin, DecCoin) {
+	if prec < 0 || prec > Precision {
+		panic(fmt.Sprintf("prec range error, %d", prec))
+	}
+
+	tempTruncated := coin.Amount.TruncateWithPrec(prec)
+	truncated := NewDecFromIntWithPrec(tempTruncated, prec)
+	change := coin.Amount.Sub(truncated)
+	return NewCoin(coin.Denom, truncated), NewDecCoinFromDec(coin.Denom, change)
+}
+
 // IsPositive returns true if coin amount is positive.
 //
 // TODO: Remove once unsigned integers are used.
@@ -203,35 +217,38 @@ func (coin DecCoin) IsValid() bool {
 	return !coin.IsNegative()
 }
 
-var decCoinBufferPool = amino.NewBufferPool()
-
 func (coin DecCoin) MarshalToAmino(cdc *amino.Codec) ([]byte, error) {
-	var buf = decCoinBufferPool.Get()
-	defer decCoinBufferPool.Put(buf)
-	for pos := 1; pos < 3; pos++ {
-		switch pos {
-		case 1:
-			if coin.Denom == "" {
-				break
-			}
-			err := amino.EncodeStringWithKeyToBuffer(buf, coin.Denom, 1<<3|2)
-			if err != nil {
-				return nil, err
-			}
-		case 2:
-			data, err := coin.Amount.MarshalToAmino(cdc)
-			if err != nil {
-				return nil, err
-			}
-			err = amino.EncodeByteSliceWithKeyToBuffer(buf, data, 2<<3|2)
-			if err != nil {
-				return nil, err
-			}
-		default:
-			panic("unreachable")
+	buf := bytes.NewBuffer(make([]byte, 0, coin.AminoSize(cdc)))
+	err := coin.MarshalAminoTo(cdc, buf)
+	if err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
+}
+
+func (coin DecCoin) MarshalAminoTo(cdc *amino.Codec, buf *bytes.Buffer) error {
+	// field 1
+	if coin.Denom != "" {
+		const pbKey = 1<<3 | 2
+		err := amino.EncodeStringWithKeyToBuffer(buf, coin.Denom, pbKey)
+		if err != nil {
+			return err
 		}
 	}
-	return amino.GetBytesBufferCopy(buf), nil
+	// field 2
+	{
+		const pbKey = 2<<3 | 2
+		data, err := coin.Amount.MarshalToAmino(cdc)
+		if err != nil {
+			return err
+		}
+		err = amino.EncodeByteSliceWithKeyToBuffer(buf, data, pbKey)
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 func (coin DecCoin) AminoSize(cdc *amino.Codec) int {
@@ -310,6 +327,22 @@ func (coins DecCoins) String() string {
 func (coins DecCoins) TruncateDecimal() (truncatedCoins Coins, changeCoins DecCoins) {
 	for _, coin := range coins {
 		truncated, change := coin.TruncateDecimal()
+		if !truncated.IsZero() {
+			truncatedCoins = truncatedCoins.Add(truncated)
+		}
+		if !change.IsZero() {
+			changeCoins = changeCoins.Add(change)
+		}
+	}
+
+	return truncatedCoins, changeCoins
+}
+
+// TruncateWithPrec returns the coins with truncated fix coins and returns the
+// change with prec. Note, it will not return any zero-amount coins in either the truncated or change coins.
+func (coins DecCoins) TruncateWithPrec(prec int64) (truncatedCoins Coins, changeCoins DecCoins) {
+	for _, coin := range coins {
+		truncated, change := coin.TruncateWithPrec(prec)
 		if !truncated.IsZero() {
 			truncatedCoins = truncatedCoins.Add(truncated)
 		}

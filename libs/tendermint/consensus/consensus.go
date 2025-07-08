@@ -42,6 +42,11 @@ func GetActiveVC() bool {
 	return activeViewChange
 }
 
+type preBlockTaskRes struct {
+	block      *types.Block
+	blockParts *types.PartSet
+}
+
 //-----------------------------------------------------------------------------
 
 const (
@@ -91,9 +96,6 @@ type State struct {
 
 	// store blocks and commits
 	blockStore sm.BlockStore
-
-	// store deltas
-	deltaStore sm.DeltaStore
 
 	// create and execute blocks
 	blockExec *sm.BlockExecutor
@@ -159,8 +161,9 @@ type State struct {
 	prerunTx bool
 	bt       *BlockTransport
 
-	vcMsg *ViewChangeMessage
-	hasVC bool // active-view-change(enterNewRoundAVC) at this Height
+	vcMsg          *ViewChangeMessage
+	vcHeight       map[int64]string
+	taskResultChan chan *preBlockTaskRes
 }
 
 // StateOption sets an optional parameter on the State.
@@ -172,7 +175,6 @@ func NewState(
 	state sm.State,
 	blockExec *sm.BlockExecutor,
 	blockStore sm.BlockStore,
-	deltaStore sm.DeltaStore,
 	txNotifier txNotifier,
 	evpool evidencePool,
 	options ...StateOption,
@@ -181,7 +183,6 @@ func NewState(
 		config:             config,
 		blockExec:          blockExec,
 		blockStore:         blockStore,
-		deltaStore:         deltaStore,
 		txNotifier:         txNotifier,
 		peerMsgQueue:       make(chan msgInfo, msgQueueSize),
 		internalMsgQueue:   make(chan msgInfo, msgQueueSize),
@@ -198,11 +199,18 @@ func NewState(
 		bt:                 &BlockTransport{},
 		blockTimeTrc:       trace.NewTracer(trace.LastBlockTime),
 		timeoutIntervalTrc: trace.NewTracer(trace.TimeoutInterval),
+		vcHeight:           make(map[int64]string),
+		taskResultChan:     make(chan *preBlockTaskRes, 1),
 	}
 	// set function defaults (may be overwritten before calling Start)
 	cs.decideProposal = cs.defaultDecideProposal
 	cs.doPrevote = cs.defaultDoPrevote
 	cs.setProposal = cs.defaultSetProposal
+
+	// We have no votes, so reconstruct LastCommit from SeenCommit.
+	if state.LastBlockHeight > types.GetStartBlockHeight() {
+		cs.reconstructLastCommit(state)
+	}
 
 	cs.updateToState(state)
 	if cs.prerunTx {
@@ -211,7 +219,6 @@ func NewState(
 
 	// Don't call scheduleRound0 yet.
 	// We do that upon Start().
-	cs.reconstructLastCommit(state)
 	cs.BaseService = *service.NewBaseService(nil, "State", cs)
 	for _, option := range options {
 		option(cs)
@@ -408,7 +415,9 @@ func (cs *State) OnReset() error {
 // NOTE: be sure to Stop() the event switch and drain
 // any event channels or this may deadlock
 func (cs *State) Wait() {
-	<-cs.done
+	if cs.done != nil {
+		<-cs.done
+	}
 }
 
 // OpenWAL opens a file to log all consensus messages and timeouts for deterministic accountability
@@ -553,7 +562,7 @@ func (cs *State) recordMetrics(height int64, block *types.Block) {
 
 	cs.metrics.NumTxs.Set(float64(len(block.Data.Txs)))
 	cs.metrics.TotalTxs.Add(float64(len(block.Data.Txs)))
-	cs.metrics.BlockSizeBytes.Set(float64(block.Size()))
+	cs.metrics.BlockSizeBytes.Set(float64(block.FastSize()))
 	cs.metrics.CommittedHeight.Set(float64(block.Height))
 }
 
@@ -579,7 +588,7 @@ func (cs *State) BlockExec() *sm.BlockExecutor {
 
 //---------------------------------------------------------
 
-func CompareHRS(h1 int64, r1 int, s1 cstypes.RoundStepType, h2 int64, r2 int, s2 cstypes.RoundStepType) int {
+func CompareHRS(h1 int64, r1 int, s1 cstypes.RoundStepType, h2 int64, r2 int, s2 cstypes.RoundStepType, hasVC bool) int {
 	if h1 < h2 {
 		return -1
 	} else if h1 > h2 {
@@ -588,6 +597,9 @@ func CompareHRS(h1 int64, r1 int, s1 cstypes.RoundStepType, h2 int64, r2 int, s2
 	if r1 < r2 {
 		return -1
 	} else if r1 > r2 {
+		return 1
+	}
+	if hasVC {
 		return 1
 	}
 	if s1 < s2 {

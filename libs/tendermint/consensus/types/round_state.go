@@ -82,7 +82,6 @@ type RoundState struct {
 	// Last known round with POL for non-nil valid block.
 	ValidRound int          `json:"valid_round"`
 	ValidBlock *types.Block `json:"valid_block"` // Last known block of POL mentioned above.
-	Deltas     *types.Deltas
 
 	// Last known block parts of POL metnioned above.
 	ValidBlockParts           *types.PartSet      `json:"valid_block_parts"`
@@ -91,6 +90,7 @@ type RoundState struct {
 	LastCommit                *types.VoteSet      `json:"last_commit"`  // Last precommits at Height-1
 	LastValidators            *types.ValidatorSet `json:"last_validators"`
 	TriggeredTimeoutPrecommit bool                `json:"triggered_timeout_precommit"`
+	HasVC                     bool                `json:"has_vc"` // active-view-change(enterNewRoundAVC) at this Height
 }
 
 // Compressed version of the RoundState for use in RPC
