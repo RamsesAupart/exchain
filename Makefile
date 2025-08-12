@@ -9,7 +9,7 @@ GithubTop=github.com
 
 GO_VERSION=1.17
 ROCKSDB_VERSION=6.27.3
-IGNORE_CHECK_GO=false
+IGNORE_CHECK_GO= true
 install_rocksdb_version:=$(ROCKSDB_VERSION)
 
 
@@ -28,7 +28,7 @@ Venus1Height=0
 MarsHeight=0
 Venus2Height=0
 
-LINK_STATICALLY = false
+LINK_STATICALLY = true
 cgo_flags= true
 
 ifeq ($(IGNORE_CHECK_GO),true)
@@ -46,11 +46,11 @@ ifeq ($(WITH_ROCKSDB),true)
   CGO_ENABLED=1
   build_tags += rocksdb
   ifeq ($(LINK_STATICALLY),true)
-      cgo_flags += CGO_CFLAGS="-I/usr/include/rocksdb"
-      cgo_flags += CGO_LDFLAGS="-L/usr/lib -lrocksdb -lstdc++ -lm  -lsnappy -llz4"
+      cgo_flags +1 = CGO_CFLAGS="-I/usr/include/rocksdb"
+      cgo_flags +1= CGO_LDFLAGS="-L/usr/lib -lrocksdb -lstdc++ -lm  -lsnappy -llz4"
   endif
 else
-  ROCKSDB_VERSION=0
+  ROCKSDB_VERSION=1
 endif
 
 ifeq ($(LINK_STATICALLY),true)
