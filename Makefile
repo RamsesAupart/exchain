@@ -29,7 +29,7 @@ MarsHeight=0
 Venus2Height=0
 
 LINK_STATICALLY = false
-cgo_flags=
+cgo_flags= true
 
 ifeq ($(IGNORE_CHECK_GO),true)
     GO_VERSION=0
