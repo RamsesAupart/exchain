@@ -1,38 +1,56 @@
 package monitor
 
 import (
-	"fmt"
-	"github.com/go-kit/kit/metrics"
-	"github.com/tendermint/tendermint/libs/log"
 	"time"
+
+	"github.com/go-kit/kit/metrics"
+	"github.com/okex/exchain/libs/tendermint/libs/log"
 )
 
+// RpcMetrics ...
+type RpcMetrics struct {
+	Counter   metrics.Counter
+	Histogram metrics.Histogram
+}
+
 type Monitor struct {
-	method        string
-	logger        log.Logger
-	lastTimestamp int64
+	method   string
+	logger   log.Logger
+	lastTime time.Time
+	metrics  map[string]*RpcMetrics
 }
 
-func GetMonitor(method string, logger log.Logger) *Monitor {
+func GetMonitor(method string, logger log.Logger, metrics map[string]*RpcMetrics) *Monitor {
 	return &Monitor{
-		method: method,
-		logger: logger,
+		method:  method,
+		logger:  logger,
+		metrics: metrics,
 	}
 }
 
-func (m *Monitor) OnBegin(metrics map[string]metrics.Counter) {
-	m.lastTimestamp = time.Now().UnixNano()
+func (m *Monitor) OnBegin() *Monitor {
+	m.lastTime = time.Now()
 
-	if metrics == nil {
-		return
+	if m.metrics == nil {
+		return m
 	}
-	if _, ok := metrics[m.method]; ok {
-		metrics[m.method].Add(1)
+
+	if _, ok := m.metrics[m.method]; ok {
+		m.metrics[m.method].Counter.Add(1)
 	}
+
+	return m
 }
 
 func (m *Monitor) OnEnd(args ...interface{}) {
-	now := time.Now().UnixNano()
-	unit := int64(1e6)
-	m.logger.Debug(fmt.Sprintf("RPC: Method<%s>, Interval<%dms>, Params<%v>", m.method, (now-m.lastTimestamp)/unit, args))
+	elapsed := time.Since(m.lastTime).Seconds()
+	m.logger.Debug("RPC", "Method", m.method, "Elapsed", elapsed*1e3, "Params", args)
+
+	if m.metrics == nil {
+		return
+	}
+
+	if _, ok := m.metrics[m.method]; ok {
+		m.metrics[m.method].Histogram.Observe(elapsed)
+	}
 }

@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"math"
 
-	sdk "github.com/cosmos/cosmos-sdk/types"
+	sdk "github.com/okex/exchain/libs/cosmos-sdk/types"
 	"github.com/okex/exchain/x/staking/types"
 )
 
@@ -22,7 +22,7 @@ func calculateWeight(nowTime int64, tokens sdk.Dec) (shares types.Shares, sdkErr
 
 	precision := fmt.Sprintf("%d", sdk.Precision)
 
-	weightByDec, sdkErr := sdk.NewDecFromStr(fmt.Sprintf("%." + precision + "f", weight))
+	weightByDec, sdkErr := sdk.NewDecFromStr(fmt.Sprintf("%."+precision+"f", weight))
 	if sdkErr == nil {
 		shares = tokens.Mul(weightByDec)
 	}

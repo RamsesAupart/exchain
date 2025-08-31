@@ -7,41 +7,47 @@ import (
 	"os"
 	"time"
 
-	"github.com/tendermint/tendermint/libs/log"
+	"github.com/spf13/viper"
 
-	"github.com/cosmos/cosmos-sdk/crypto/keys"
-	"github.com/cosmos/cosmos-sdk/crypto/keys/mintkey"
+	"github.com/google/uuid"
+	"github.com/okex/exchain/libs/tendermint/libs/log"
+
+	"github.com/okex/exchain/libs/cosmos-sdk/crypto/keys"
+	"github.com/okex/exchain/libs/cosmos-sdk/crypto/keys/mintkey"
 
 	"github.com/ethereum/go-ethereum/accounts"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/crypto"
 
+	"github.com/okex/exchain/app/crypto/ethkeystore"
 	"github.com/okex/exchain/app/crypto/ethsecp256k1"
 	"github.com/okex/exchain/app/crypto/hd"
 	"github.com/okex/exchain/app/rpc/namespaces/eth"
 	rpctypes "github.com/okex/exchain/app/rpc/types"
+	"github.com/okex/exchain/libs/cosmos-sdk/server"
 )
 
 // PrivateAccountAPI is the personal_ prefixed set of APIs in the Web3 JSON-RPC spec.
 type PrivateAccountAPI struct {
-	ethAPI   *eth.PublicEthereumAPI
-	logger   log.Logger
-	keyInfos []keys.Info // all keys, both locked and unlocked. unlocked keys are stored in ethAPI.keys
+	ethAPI           *eth.PublicEthereumAPI
+	logger           log.Logger
+	keyInfos         []keys.Info // all keys, both locked and unlocked. unlocked keys are stored in ethAPI.keys
+	isExportKeystore bool
 }
 
 // NewAPI creates an instance of the public Personal Eth API.
 func NewAPI(ethAPI *eth.PublicEthereumAPI, log log.Logger) *PrivateAccountAPI {
 	api := &PrivateAccountAPI{
-		ethAPI: ethAPI,
-		logger: log.With("module", "json-rpc", "namespace", "personal"),
+		ethAPI:           ethAPI,
+		logger:           log.With("module", "json-rpc", "namespace", "personal"),
+		isExportKeystore: viper.GetBool(server.FlagExportKeystore),
 	}
 
 	err := api.ethAPI.GetKeyringInfo()
 	if err != nil {
 		return api
 	}
-
 	api.keyInfos, err = api.ethAPI.ClientCtx().Keybase.List()
 	if err != nil {
 		return api
@@ -56,6 +62,7 @@ func NewAPI(ethAPI *eth.PublicEthereumAPI, log log.Logger) *PrivateAccountAPI {
 // NOTE: The key will be both armored and encrypted using the same passphrase.
 func (api *PrivateAccountAPI) ImportRawKey(privkey, password string) (common.Address, error) {
 	api.logger.Debug("personal_importRawKey")
+
 	priv, err := crypto.HexToECDSA(privkey)
 	if err != nil {
 		return common.Address{}, err
@@ -71,7 +78,7 @@ func (api *PrivateAccountAPI) ImportRawKey(privkey, password string) (common.Add
 			return common.BytesToAddress(info.GetAddress().Bytes()), nil
 		}
 	}
-	privKeyName := fmt.Sprintf("personal_%d", len(list))
+	privKeyName := fmt.Sprintf("personal_%s", uuid.New())
 	armor := mintkey.EncryptArmorPrivKey(privKey, password, ethsecp256k1.KeyType)
 
 	if err := api.ethAPI.ClientCtx().Keybase.ImportPrivKey(privKeyName, armor, password); err != nil {
@@ -132,19 +139,43 @@ func (api *PrivateAccountAPI) LockAccount(address common.Address) bool {
 func (api *PrivateAccountAPI) NewAccount(password string) (common.Address, error) {
 	api.logger.Debug("personal_newAccount")
 
-	name := "key_" + time.Now().UTC().Format(time.RFC3339)
+	name := "key_" + time.Now().UTC().Format(time.RFC3339) + uuid.New().String()
 	info, _, err := api.ethAPI.ClientCtx().Keybase.CreateMnemonic(name, keys.English, password, hd.EthSecp256k1, "")
 	if err != nil {
 		return common.Address{}, err
 	}
 
 	api.keyInfos = append(api.keyInfos, info)
-
 	addr := common.BytesToAddress(info.GetPubKey().Address().Bytes())
+
+	// export a private key as ethereum keystore
+	if api.isExportKeystore {
+		ksName, err := exportKeystoreFromKeybase(api.ethAPI.ClientCtx().Keybase, name, password)
+		if err != nil {
+			return common.Address{}, err
+		}
+		api.logger.Info("Please backup your eth keystore file", "path", ksName)
+	}
+
 	api.logger.Info("Your new key was generated", "address", addr.String())
 	api.logger.Info("Please backup your key file!", "path", os.Getenv("HOME")+"/.exchaind/"+name)
 	api.logger.Info("Please remember your password!")
 	return addr, nil
+}
+
+// exportKeystoreFromKeybase export a keybase.key to eth keystore.key
+func exportKeystoreFromKeybase(kb keys.Keybase, accName, password string) (string, error) {
+	// export tendermint private key
+	privKey, err := kb.ExportPrivateKeyObject(accName, password)
+	if err != nil {
+		return "", err
+	}
+	//create a keystore file to storage private key
+	keyDir, err := kb.FileDir()
+	if err != nil {
+		return "", err
+	}
+	return ethkeystore.CreateKeystoreByTmKey(privKey, keyDir, password)
 }
 
 // UnlockAccount will unlock the account associated with the given address with

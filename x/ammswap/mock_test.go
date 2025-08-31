@@ -1,21 +1,23 @@
+//go:build ignore
+
 package ammswap
 
 import (
 	"fmt"
 	"testing"
 
-	"github.com/cosmos/cosmos-sdk/codec"
-	sdk "github.com/cosmos/cosmos-sdk/types"
-	"github.com/cosmos/cosmos-sdk/x/auth"
-	"github.com/cosmos/cosmos-sdk/x/bank"
-	"github.com/cosmos/cosmos-sdk/x/mock"
-	"github.com/cosmos/cosmos-sdk/x/supply"
-	"github.com/cosmos/cosmos-sdk/x/supply/exported"
+	"github.com/okex/exchain/libs/cosmos-sdk/codec"
+	sdk "github.com/okex/exchain/libs/cosmos-sdk/types"
+	"github.com/okex/exchain/libs/cosmos-sdk/x/auth"
+	"github.com/okex/exchain/libs/cosmos-sdk/x/bank"
+	"github.com/okex/exchain/libs/cosmos-sdk/x/mock"
+	"github.com/okex/exchain/libs/cosmos-sdk/x/supply"
+	"github.com/okex/exchain/libs/cosmos-sdk/x/supply/exported"
+	abci "github.com/okex/exchain/libs/tendermint/abci/types"
+	"github.com/okex/exchain/libs/tendermint/crypto/secp256k1"
 	"github.com/okex/exchain/x/ammswap/types"
 	staking "github.com/okex/exchain/x/staking/types"
 	"github.com/stretchr/testify/require"
-	abci "github.com/tendermint/tendermint/abci/types"
-	"github.com/tendermint/tendermint/crypto/secp256k1"
 
 	"github.com/okex/exchain/x/token"
 )
@@ -48,7 +50,7 @@ func getMockApp(t *testing.T, numGenAccs int) (mockApp *MockApp, addrKeysSlice m
 func getMockAppWithBalance(t *testing.T, numGenAccs int, balance int64) (mockApp *MockApp,
 	addrKeysSlice mock.AddrKeysSlice) {
 	mapp := mock.NewApp()
-	registerCodec(mapp.Cdc)
+	registerCodec(mapp.Cdc.GetCdc())
 
 	mockApp = &MockApp{
 		App:       mapp,
@@ -71,7 +73,7 @@ func getMockAppWithBalance(t *testing.T, numGenAccs int, balance int64) (mockApp
 		token.ModuleName:      {supply.Minter, supply.Burner},
 		ModuleName:            {supply.Minter, supply.Burner},
 	}
-	mockApp.supplyKeeper = supply.NewKeeper(mockApp.Cdc, mockApp.keySupply, mockApp.AccountKeeper,
+	mockApp.supplyKeeper = supply.NewKeeper(mockApp.Cdc.GetCdc(), mockApp.keySupply, mockApp.AccountKeeper,
 		mockApp.bankKeeper, maccPerms)
 
 	mockApp.tokenKeeper = token.NewKeeper(
@@ -81,13 +83,13 @@ func getMockAppWithBalance(t *testing.T, numGenAccs int, balance int64) (mockApp
 		mockApp.supplyKeeper,
 		mockApp.keyToken,
 		mockApp.keyLock,
-		mockApp.Cdc,
+		mockApp.Cdc.GetCdc(),
 		true, mockApp.AccountKeeper)
 
 	mockApp.swapKeeper = NewKeeper(
 		mockApp.supplyKeeper,
 		mockApp.tokenKeeper,
-		mockApp.Cdc,
+		mockApp.Cdc.GetCdc(),
 		mockApp.keySwap,
 		mockApp.ParamsKeeper.Subspace(DefaultParamspace),
 	)

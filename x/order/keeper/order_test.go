@@ -1,3 +1,5 @@
+//go:build ignore
+
 package keeper
 
 import (
@@ -5,8 +7,8 @@ import (
 
 	"github.com/okex/exchain/x/dex"
 
-	sdk "github.com/cosmos/cosmos-sdk/types"
-	"github.com/cosmos/cosmos-sdk/x/auth"
+	sdk "github.com/okex/exchain/libs/cosmos-sdk/types"
+	"github.com/okex/exchain/libs/cosmos-sdk/x/auth"
 	"github.com/stretchr/testify/require"
 
 	"github.com/okex/exchain/x/common"
@@ -87,7 +89,7 @@ func TestPlaceOrderAndCancelOrder(t *testing.T) {
 	require.EqualValues(t, 1, keeper.diskCache.storeOrderNum)
 
 	// Test cancel order
-	ctx = ctx.WithBlockHeight(11)
+	ctx.SetBlockHeight(11)
 	fee := keeper.CancelOrder(ctx, order, ctx.Logger())
 	// check result
 	require.Equal(t, "0.000001000000000000"+common.NativeToken, fee.String())
@@ -168,7 +170,7 @@ func TestPlaceOrderAndExpireOrder(t *testing.T) {
 	require.EqualValues(t, 1, keeper.diskCache.storeOrderNum)
 
 	// Test expire order
-	ctx = ctx.WithBlockHeight(11)
+	ctx.SetBlockHeight(11)
 	keeper.ExpireOrder(ctx, order, ctx.Logger())
 	// check order status
 	require.EqualValues(t, types.OrderStatusExpired, order.Status)

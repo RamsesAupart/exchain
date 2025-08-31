@@ -3,7 +3,7 @@ package types
 import (
 	"fmt"
 
-	sdk "github.com/cosmos/cosmos-sdk/types"
+	sdk "github.com/okex/exchain/libs/cosmos-sdk/types"
 
 	"github.com/okex/exchain/x/params"
 )
@@ -47,7 +47,6 @@ func (p Params) String() string {
 	return fmt.Sprintf(`Poolswap Params:
   TradeFeeRate: %s`, p.FeeRate)
 }
-
 
 func validateParams(value interface{}) error {
 	v, ok := value.(sdk.Dec)

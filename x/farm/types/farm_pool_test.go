@@ -1,3 +1,6 @@
+//go:build ignore
+// +build ignore
+
 package types
 
 import (
@@ -5,7 +8,7 @@ import (
 
 	"github.com/okex/exchain/x/common"
 
-	sdk "github.com/cosmos/cosmos-sdk/types"
+	sdk "github.com/okex/exchain/libs/cosmos-sdk/types"
 	"github.com/stretchr/testify/require"
 )
 

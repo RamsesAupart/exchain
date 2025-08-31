@@ -2,28 +2,32 @@ package rpc
 
 import (
 	"fmt"
-	"github.com/cosmos/cosmos-sdk/client/context"
-	"github.com/cosmos/cosmos-sdk/server"
-	"github.com/ethereum/go-ethereum/rpc"
-	"github.com/go-kit/kit/metrics"
-	"github.com/go-kit/kit/metrics/prometheus"
-	evmtypes "github.com/okex/exchain/x/evm/types"
-	stdprometheus "github.com/prometheus/client_golang/prometheus"
-	"github.com/spf13/viper"
-	"github.com/tendermint/tendermint/libs/log"
-	"golang.org/x/time/rate"
 	"reflect"
 	"strings"
 	"unicode"
 
+	"github.com/ethereum/go-ethereum/rpc"
+	"github.com/go-kit/kit/metrics/prometheus"
+	"github.com/okex/exchain/app/rpc/namespaces/eth/txpool"
+	"github.com/okex/exchain/libs/cosmos-sdk/client/context"
+	"github.com/okex/exchain/libs/cosmos-sdk/server"
+	"github.com/okex/exchain/libs/tendermint/libs/log"
+	evmtypes "github.com/okex/exchain/x/evm/types"
+	stdprometheus "github.com/prometheus/client_golang/prometheus"
+	"github.com/spf13/viper"
+	"golang.org/x/time/rate"
+
 	"github.com/okex/exchain/app/crypto/ethsecp256k1"
 	"github.com/okex/exchain/app/rpc/backend"
+	"github.com/okex/exchain/app/rpc/monitor"
+	"github.com/okex/exchain/app/rpc/namespaces/debug"
 	"github.com/okex/exchain/app/rpc/namespaces/eth"
 	"github.com/okex/exchain/app/rpc/namespaces/eth/filters"
 	"github.com/okex/exchain/app/rpc/namespaces/net"
 	"github.com/okex/exchain/app/rpc/namespaces/personal"
 	"github.com/okex/exchain/app/rpc/namespaces/web3"
 	rpctypes "github.com/okex/exchain/app/rpc/types"
+	cosmost "github.com/okex/exchain/libs/cosmos-sdk/store/types"
 )
 
 // RPC namespaces and API version
@@ -32,22 +36,28 @@ const (
 	EthNamespace      = "eth"
 	PersonalNamespace = "personal"
 	NetNamespace      = "net"
+	TxpoolNamespace   = "txpool"
+	DebugNamespace    = "debug"
 
 	apiVersion = "1.0"
 )
+
+var ethBackend *backend.EthermintBackend
+
+func CloseEthBackend() {
+	if ethBackend != nil {
+		ethBackend.Close()
+	}
+}
 
 // GetAPIs returns the list of all APIs from the Ethereum namespaces
 func GetAPIs(clientCtx context.CLIContext, log log.Logger, keys ...ethsecp256k1.PrivKey) []rpc.API {
 	nonceLock := new(rpctypes.AddrLocker)
 	rateLimiters := getRateLimiter()
-	ethBackend := backend.New(clientCtx, log, rateLimiters)
+	disableAPI := getDisableAPI()
+	ethBackend = backend.New(clientCtx, log, rateLimiters, disableAPI)
 	ethAPI := eth.NewAPI(clientCtx, log, ethBackend, nonceLock, keys...)
 	if evmtypes.GetEnableBloomFilter() {
-		server.TrapSignal(func() {
-			if ethBackend != nil {
-				ethBackend.Close()
-			}
-		})
 		ethBackend.StartBloomHandlers(evmtypes.BloomBitsBlocks, evmtypes.GetIndexer().GetDB())
 	}
 
@@ -76,6 +86,12 @@ func GetAPIs(clientCtx context.CLIContext, log log.Logger, keys ...ethsecp256k1.
 			Service:   net.NewAPI(clientCtx, log),
 			Public:    true,
 		},
+		{
+			Namespace: TxpoolNamespace,
+			Version:   apiVersion,
+			Service:   txpool.NewAPI(clientCtx, log, ethBackend),
+			Public:    true,
+		},
 	}
 
 	if viper.GetBool(FlagPersonalAPI) {
@@ -84,6 +100,15 @@ func GetAPIs(clientCtx context.CLIContext, log log.Logger, keys ...ethsecp256k1.
 			Version:   apiVersion,
 			Service:   personal.NewAPI(ethAPI, log),
 			Public:    false,
+		})
+	}
+
+	if viper.GetBool(FlagDebugAPI) && viper.GetString(server.FlagPruning) == cosmost.PruningOptionNothing {
+		apis = append(apis, rpc.API{
+			Namespace: DebugNamespace,
+			Version:   apiVersion,
+			Service:   debug.NewAPI(clientCtx, log, ethBackend),
+			Public:    true,
 		})
 	}
 
@@ -96,7 +121,7 @@ func GetAPIs(clientCtx context.CLIContext, log log.Logger, keys ...ethsecp256k1.
 }
 
 func getRateLimiter() map[string]*rate.Limiter {
-	rateLimitApi := viper.GetString(FlagRateLimitApi)
+	rateLimitApi := viper.GetString(FlagRateLimitAPI)
 	rateLimitCount := viper.GetInt(FlagRateLimitCount)
 	rateLimitBurst := viper.GetInt(FlagRateLimitBurst)
 	if rateLimitApi == "" || rateLimitCount == 0 {
@@ -110,6 +135,16 @@ func getRateLimiter() map[string]*rate.Limiter {
 	return rateLimiters
 }
 
+func getDisableAPI() map[string]bool {
+	disableAPI := viper.GetString(FlagDisableAPI)
+	apiMap := make(map[string]bool)
+	apis := strings.Split(disableAPI, ",")
+	for _, api := range apis {
+		apiMap[api] = true
+	}
+	return apiMap
+}
+
 func makeMonitorMetrics(namespace string, service interface{}) {
 	receiver := reflect.ValueOf(service)
 	if !hasMetricsField(receiver.Elem()) {
@@ -117,7 +152,7 @@ func makeMonitorMetrics(namespace string, service interface{}) {
 	}
 	metricsVal := receiver.Elem().FieldByName(MetricsFieldName)
 
-	monitorMetrics := make(map[string]metrics.Counter)
+	monitorMetrics := make(map[string]*monitor.RpcMetrics)
 	typ := receiver.Type()
 	for m := 0; m < typ.NumMethod(); m++ {
 		method := typ.Method(m)
@@ -126,12 +161,22 @@ func makeMonitorMetrics(namespace string, service interface{}) {
 		}
 		methodName := formatMethodName(method.Name)
 		name := fmt.Sprintf("%s_%s", namespace, methodName)
-		monitorMetrics[name] = prometheus.NewCounterFrom(stdprometheus.CounterOpts{
-			Namespace: MetricsNamespace,
-			Subsystem: MetricsSubsystem,
-			Name:      name,
-			Help:      fmt.Sprintf("Number of %s method.", name),
-		}, nil)
+		monitorMetrics[name] = &monitor.RpcMetrics{
+			Counter: prometheus.NewCounterFrom(stdprometheus.CounterOpts{
+				Namespace: MetricsNamespace,
+				Subsystem: MetricsSubsystem,
+				Name:      fmt.Sprintf("%s_count", name),
+				Help:      fmt.Sprintf("Total request number of %s method.", name),
+			}, nil),
+			Histogram: prometheus.NewHistogramFrom(stdprometheus.HistogramOpts{
+				Namespace: MetricsNamespace,
+				Subsystem: MetricsSubsystem,
+				Name:      fmt.Sprintf("%s_duration", name),
+				Help:      fmt.Sprintf("Request duration of %s method.", name),
+				Buckets:   []float64{0.1, 0.2, 0.3, 0.4, 0.5, 0.8, 1, 3, 5, 8, 10},
+			}, nil),
+		}
+
 	}
 
 	if metricsVal.CanSet() && metricsVal.Type() == reflect.ValueOf(monitorMetrics).Type() {

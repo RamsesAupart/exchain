@@ -1,10 +1,10 @@
 package keeper
 
 import (
-	supplyexported "github.com/cosmos/cosmos-sdk/x/supply/exported"
+	supplyexported "github.com/okex/exchain/libs/cosmos-sdk/x/supply/exported"
 	stakingexported "github.com/okex/exchain/x/staking/exported"
 
-	sdk "github.com/cosmos/cosmos-sdk/types"
+	sdk "github.com/okex/exchain/libs/cosmos-sdk/types"
 )
 
 // BankKeeper defines expected bank keeper
@@ -41,4 +41,3 @@ type SupplyKeeper interface {
 	SendCoinsFromModuleToModule(ctx sdk.Context, senderModule, recipientModule string, amt sdk.Coins) sdk.Error
 	BurnCoins(ctx sdk.Context, name string, amt sdk.Coins) sdk.Error
 }
-

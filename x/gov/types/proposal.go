@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	sdk "github.com/cosmos/cosmos-sdk/types"
+	sdk "github.com/okex/exchain/libs/cosmos-sdk/types"
 )
 
 // Proposal defines a struct used by the governance module to allow for voting
@@ -70,15 +70,20 @@ func (p Proposals) String() string {
 	return strings.TrimSpace(out)
 }
 
-//func (p Proposals) MarshalYAML() (interface{}, error) {
-//	out := "ID - (Status) [Type] Title\n"
-//	for _, prop := range p {
-//		out += fmt.Sprintf("%d - (%s) [%s] %s\n",
-//			prop.ProposalID, prop.Status,
-//			prop.ProposalType(), prop.GetTitle())
-//	}
-//	return strings.TrimSpace(out), nil
-//}
+// WrapProposalForCosmosAPI is for compatibility with the standard cosmos REST API
+func WrapProposalForCosmosAPI(proposal Proposal, content Content) Proposal {
+	return Proposal{
+		Content:          content,
+		ProposalID:       proposal.ProposalID,
+		Status:           proposal.Status,
+		FinalTallyResult: proposal.FinalTallyResult,
+		SubmitTime:       proposal.SubmitTime,
+		DepositEndTime:   proposal.DepositEndTime,
+		TotalDeposit:     proposal.TotalDeposit,
+		VotingStartTime:  proposal.VotingStartTime,
+		VotingEndTime:    proposal.VotingEndTime,
+	}
+}
 
 type (
 	// ProposalQueue

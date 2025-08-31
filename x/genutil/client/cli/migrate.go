@@ -4,14 +4,14 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/okex/exchain/libs/tendermint/types"
 	"github.com/spf13/cobra"
-	"github.com/tendermint/tendermint/types"
 
-	"github.com/cosmos/cosmos-sdk/codec"
-	"github.com/cosmos/cosmos-sdk/server"
-	sdk "github.com/cosmos/cosmos-sdk/types"
-	"github.com/cosmos/cosmos-sdk/version"
-	extypes "github.com/cosmos/cosmos-sdk/x/genutil"
+	"github.com/okex/exchain/libs/cosmos-sdk/codec"
+	"github.com/okex/exchain/libs/cosmos-sdk/server"
+	sdk "github.com/okex/exchain/libs/cosmos-sdk/types"
+	"github.com/okex/exchain/libs/cosmos-sdk/version"
+	extypes "github.com/okex/exchain/libs/cosmos-sdk/x/genutil"
 	v018 "github.com/okex/exchain/x/genutil/client/legacy/v0_18"
 )
 

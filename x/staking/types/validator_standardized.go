@@ -5,10 +5,10 @@ import (
 	"strings"
 	"time"
 
-	sdk "github.com/cosmos/cosmos-sdk/types"
-	abci "github.com/tendermint/tendermint/abci/types"
-	"github.com/tendermint/tendermint/crypto"
-	tmtypes "github.com/tendermint/tendermint/types"
+	sdk "github.com/okex/exchain/libs/cosmos-sdk/types"
+	abci "github.com/okex/exchain/libs/tendermint/abci/types"
+	"github.com/okex/exchain/libs/tendermint/crypto"
+	tmtypes "github.com/okex/exchain/libs/tendermint/types"
 )
 
 // Export returns the exported format of validator in genesis export
@@ -43,6 +43,7 @@ func (v Validator) Standardize() StandardizedValidator {
 		v.UnbondingHeight,
 		v.UnbondingCompletionTime,
 		v.MinSelfDelegation,
+		v.Commission,
 	}
 }
 
@@ -79,6 +80,7 @@ type StandardizedValidator struct {
 	UnbondingHeight         int64          `json:"unbonding_height" yaml:"unbonding_height"`
 	UnbondingCompletionTime time.Time      `json:"unbonding_time" yaml:"unbonding_time"`
 	MinSelfDelegation       sdk.Dec        `json:"min_self_delegation" yaml:"min_self_delegation"`
+	Commission              Commission     `json:"commission" yaml:"commission"`
 }
 
 // String returns a human readable string representation of a StandardizeValidator

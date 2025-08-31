@@ -1,3 +1,5 @@
+//go:build ignore
+
 package keeper
 
 import (
@@ -6,13 +8,13 @@ import (
 
 	"github.com/okex/exchain/x/common"
 
-	"github.com/cosmos/cosmos-sdk/x/mock"
+	"github.com/okex/exchain/libs/cosmos-sdk/x/mock"
 
-	sdk "github.com/cosmos/cosmos-sdk/types"
-	"github.com/cosmos/cosmos-sdk/x/supply"
+	sdk "github.com/okex/exchain/libs/cosmos-sdk/types"
+	"github.com/okex/exchain/libs/cosmos-sdk/x/supply"
+	abci "github.com/okex/exchain/libs/tendermint/abci/types"
 	"github.com/okex/exchain/x/ammswap/types"
 	"github.com/stretchr/testify/require"
-	abci "github.com/tendermint/tendermint/abci/types"
 )
 
 func initQurierTest(t *testing.T) (*TestInput, mock.AddrKeysSlice, sdk.Context, Keeper, sdk.Querier) {

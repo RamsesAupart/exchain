@@ -5,15 +5,20 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"strings"
 
-	sdk "github.com/cosmos/cosmos-sdk/types"
-	sdkerrors "github.com/cosmos/cosmos-sdk/types/errors"
+	"github.com/okex/exchain/libs/system/trace"
+	"github.com/okex/exchain/libs/tendermint/types"
+
 	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/core"
 	ethtypes "github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/core/vm"
+	sdk "github.com/okex/exchain/libs/cosmos-sdk/types"
+	sdkerrors "github.com/okex/exchain/libs/cosmos-sdk/types/errors"
+	"github.com/okex/exchain/libs/cosmos-sdk/types/innertx"
 )
 
 // StateTransition defines data to transitionDB in evm
@@ -26,11 +31,13 @@ type StateTransition struct {
 	Amount       *big.Int
 	Payload      []byte
 
-	ChainID  *big.Int
-	Csdb     *CommitStateDB
-	TxHash   *common.Hash
-	Sender   common.Address
-	Simulate bool // i.e CheckTx execution
+	ChainID    *big.Int
+	Csdb       *CommitStateDB
+	TxHash     *common.Hash
+	Sender     common.Address
+	Simulate   bool // i.e CheckTx execution
+	TraceTx    bool // reexcute tx or its predesessors
+	TraceTxLog bool // trace tx for its evm logs (predesessors are set to false)
 }
 
 // GasInfo returns the gas limit, gas consumed and gas refunded from the EVM transition
@@ -43,10 +50,11 @@ type GasInfo struct {
 
 // ExecutionResult represents what's returned from a transition
 type ExecutionResult struct {
-	Logs    []*ethtypes.Log
-	Bloom   *big.Int
-	Result  *sdk.Result
-	GasInfo GasInfo
+	Logs      []*ethtypes.Log
+	Bloom     *big.Int
+	Result    *sdk.Result
+	GasInfo   GasInfo
+	TraceLogs []byte
 }
 
 // GetHashFn implements vm.GetHashFunc for Ethermint. It handles 3 cases:
@@ -73,22 +81,22 @@ func GetHashFn(ctx sdk.Context, csdb *CommitStateDB) vm.GetHashFunc {
 	}
 }
 
-func (st StateTransition) newEVM(
+func (st *StateTransition) newEVM(
 	ctx sdk.Context,
 	csdb *CommitStateDB,
 	gasLimit uint64,
 	gasPrice *big.Int,
-	config ChainConfig,
-	extraEIPs []int,
+	config *ChainConfig,
+	vmConfig vm.Config,
 ) *vm.EVM {
 	// Create context for evm
 	blockCtx := vm.BlockContext{
 		CanTransfer: core.CanTransfer,
 		Transfer:    core.Transfer,
 		GetHash:     GetHashFn(ctx, csdb),
-		Coinbase:    common.BytesToAddress(ctx.BlockHeader().ProposerAddress),
+		Coinbase:    common.BytesToAddress(ctx.BlockProposerAddress()),
 		BlockNumber: big.NewInt(ctx.BlockHeight()),
-		Time:        big.NewInt(ctx.BlockHeader().Time.Unix()),
+		Time:        big.NewInt(ctx.BlockTime().Unix()),
 		Difficulty:  big.NewInt(0), // unused. Only required in PoW context
 		GasLimit:    gasLimit,
 	}
@@ -98,35 +106,49 @@ func (st StateTransition) newEVM(
 		GasPrice: gasPrice,
 	}
 
-	vmConfig := vm.Config{
-		ExtraEips: extraEIPs,
-	}
-
 	return vm.NewEVM(blockCtx, txCtx, csdb, config.EthereumConfig(st.ChainID), vmConfig)
+}
+
+func (st *StateTransition) applyOverrides(ctx sdk.Context, csdb *CommitStateDB) error {
+	overrideBytes := ctx.OverrideBytes()
+	if overrideBytes != nil {
+		var stateOverrides StateOverrides
+		err := json.Unmarshal(overrideBytes, &stateOverrides)
+		if err != nil {
+			return fmt.Errorf("failed to decode stateOverrides")
+		}
+		stateOverrides.Apply(csdb)
+	}
+	return nil
 }
 
 // TransitionDb will transition the state by applying the current transaction and
 // returning the evm execution result.
 // NOTE: State transition checks are run during AnteHandler execution.
-func (st StateTransition) TransitionDb(ctx sdk.Context, config ChainConfig) (exeRes *ExecutionResult, resData *ResultData, err error) {
+func (st StateTransition) TransitionDb(ctx sdk.Context, config ChainConfig) (exeRes *ExecutionResult, resData *ResultData, err error, innerTxs, erc20Contracts interface{}) {
+	preSSId := st.Csdb.Snapshot()
+	contractCreation := st.Recipient == nil
+
 	defer func() {
 		if e := recover(); e != nil {
-			// if the msg recovered can be asserted into type 'common.Address', it must be captured by the panics of blocked
+			if !st.Simulate {
+				st.Csdb.RevertToSnapshot(preSSId)
+			}
+
+			// if the msg recovered can be asserted into type 'ErrContractBlockedVerify', it must be captured by the panics of blocked
 			// contract calling
-			if blockedContractAddr, ok := e.(common.Address); ok {
-				err = ErrCallBlockedContract(blockedContractAddr)
-			} else {
-				// unexpected and unknown panic from lower part
+			switch rType := e.(type) {
+			case ErrContractBlockedVerify:
+				err = ErrCallBlockedContract(rType.Descriptor)
+			default:
 				panic(e)
 			}
 		}
 	}()
 
-	contractCreation := st.Recipient == nil
-
-	cost, err := core.IntrinsicGas(st.Payload, contractCreation, config.IsHomestead(), config.IsIstanbul())
+	cost, err := core.IntrinsicGas(st.Payload, []ethtypes.AccessTuple{}, contractCreation, config.IsHomestead(), config.IsIstanbul())
 	if err != nil {
-		return exeRes, resData, sdkerrors.Wrap(err, "invalid intrinsic gas for transaction")
+		return exeRes, resData, sdkerrors.Wrap(err, "invalid intrinsic gas for transaction"), innerTxs, erc20Contracts
 	}
 
 	consumedGas := ctx.GasMeter().GasConsumed()
@@ -142,12 +164,44 @@ func (st StateTransition) TransitionDb(ctx sdk.Context, config ChainConfig) (exe
 	// This gas meter is set up to consume gas from gaskv during evm execution and be ignored
 	currentGasMeter := ctx.GasMeter()
 	evmGasMeter := sdk.NewInfiniteGasMeter()
-	ctx = ctx.WithGasMeter(evmGasMeter)
+	ctx.SetGasMeter(evmGasMeter)
 	csdb := st.Csdb.WithContext(ctx)
+
+	StartTxLog := func(tag string) {
+		if !ctx.IsCheckTx() {
+			trace.StartTxLog(tag)
+		}
+	}
+	StopTxLog := func(tag string) {
+		if !ctx.IsCheckTx() {
+			trace.StopTxLog(tag)
+		}
+	}
+	if ctx.IsCheckTx() {
+		if err = st.applyOverrides(ctx, csdb); err != nil {
+			return
+		}
+	}
 
 	params := csdb.GetParams()
 
-	evm := st.newEVM(ctx, csdb, gasLimit, st.Price, config, params.ExtraEIPs)
+	var senderStr = EthAddressToString(&st.Sender)
+
+	to := ""
+	var recipientStr string
+	if st.Recipient != nil {
+		to = EthAddressToString(st.Recipient)
+		recipientStr = to
+	}
+	tracer := newTracer(ctx, st.TxHash)
+	vmConfig := vm.Config{
+		ExtraEips:        params.ExtraEIPs,
+		Debug:            st.TraceTxLog,
+		Tracer:           tracer,
+		ContractVerifier: NewContractVerifier(params),
+	}
+
+	evm := st.newEVM(ctx, csdb, gasLimit, st.Price, &config, vmConfig)
 
 	var (
 		ret             []byte
@@ -162,42 +216,100 @@ func (st StateTransition) TransitionDb(ctx sdk.Context, config ChainConfig) (exe
 	// Set nonce of sender account before evm state transition for usage in generating Create address
 	csdb.SetNonce(st.Sender, st.AccountNonce)
 
+	//add InnerTx
+	callTx := innertx.AddDefaultInnerTx(evm, innertx.CosmosDepth, senderStr, "", "", "", st.Amount, nil)
+
 	// create contract or execute call
 	switch contractCreation {
 	case true:
 		if !params.EnableCreate {
-			return exeRes, resData, ErrCreateDisabled
+			if !st.Simulate {
+				st.Csdb.RevertToSnapshot(preSSId)
+			}
+
+			return exeRes, resData, ErrCreateDisabled, innerTxs, erc20Contracts
 		}
 
 		// check whether the deployer address is in the whitelist if the whitelist is enabled
 		senderAccAddr := st.Sender.Bytes()
 		if params.EnableContractDeploymentWhitelist && !csdb.IsDeployerInWhitelist(senderAccAddr) {
-			return exeRes, resData, ErrUnauthorizedAccount(senderAccAddr)
+			if !st.Simulate {
+				st.Csdb.RevertToSnapshot(preSSId)
+			}
+
+			return exeRes, resData, ErrUnauthorizedAccount(senderAccAddr), innerTxs, erc20Contracts
 		}
 
+		StartTxLog(trace.EVMCORE)
+		defer StopTxLog(trace.EVMCORE)
 		ret, contractAddress, leftOverGas, err = evm.Create(senderRef, st.Payload, gasLimit, st.Amount)
-		recipientLog = fmt.Sprintf("contract address %s", contractAddress.String())
+
+		contractAddressStr := EthAddressToString(&contractAddress)
+		recipientLog = strings.Join([]string{"contract address ", contractAddressStr}, "")
+
+		innertx.UpdateDefaultInnerTx(callTx, contractAddressStr, innertx.CosmosCallType, innertx.EvmCreateName, gasLimit-leftOverGas)
 	default:
 		if !params.EnableCall {
-			return exeRes, resData, ErrCallDisabled
+			if !st.Simulate {
+				st.Csdb.RevertToSnapshot(preSSId)
+			}
+
+			return exeRes, resData, ErrCallDisabled, innerTxs, erc20Contracts
 		}
 
 		// Increment the nonce for the next transaction	(just for evm state transition)
 		csdb.SetNonce(st.Sender, csdb.GetNonce(st.Sender)+1)
+		StartTxLog(trace.EVMCORE)
+		defer StopTxLog(trace.EVMCORE)
 		ret, leftOverGas, err = evm.Call(senderRef, *st.Recipient, st.Payload, gasLimit, st.Amount)
-		recipientLog = fmt.Sprintf("recipient address %s", st.Recipient.String())
+
+		if recipientStr == "" {
+			recipientStr = EthAddressToString(st.Recipient)
+		}
+
+		recipientLog = strings.Join([]string{"recipient address ", recipientStr}, "")
+
+		innertx.UpdateDefaultInnerTx(callTx, recipientStr, innertx.CosmosCallType, innertx.EvmCallName, gasLimit-leftOverGas)
 	}
 
 	gasConsumed := gasLimit - leftOverGas
 
+	innerTxs, erc20Contracts = innertx.ParseInnerTxAndContract(evm, err != nil)
+
 	defer func() {
 		// Consume gas from evm execution
 		// Out of gas check does not need to be done here since it is done within the EVM execution
-		ctx.WithGasMeter(currentGasMeter).GasMeter().ConsumeGas(gasConsumed, "EVM execution consumption")
+		currentGasMeter.ConsumeGas(gasConsumed, "EVM execution consumption")
+	}()
+
+	// return trace log if tracetxlog no matter err = nil  or not nil
+	defer func() {
+		var traceLogs []byte
+		if st.TraceTxLog {
+			result := &core.ExecutionResult{
+				UsedGas:    gasConsumed,
+				Err:        err,
+				ReturnData: ret,
+			}
+			traceLogs, err = GetTracerResult(tracer, result)
+			if err != nil {
+				traceLogs = []byte(err.Error())
+			}
+			if exeRes == nil {
+				exeRes = &ExecutionResult{
+					Result: &sdk.Result{},
+				}
+			}
+			exeRes.TraceLogs = traceLogs
+		}
 	}()
 	if err != nil {
+		if !st.Simulate {
+			st.Csdb.RevertToSnapshot(preSSId)
+		}
+
 		// Consume gas before returning
-		return exeRes, resData, newRevertError(ret, err)
+		return exeRes, resData, newRevertError(ret, err), innerTxs, erc20Contracts
 	}
 
 	// Resets nonce to value pre state transition
@@ -214,6 +326,7 @@ func (st StateTransition) TransitionDb(ctx sdk.Context, config ChainConfig) (exe
 	if st.TxHash != nil && !st.Simulate {
 		logs, err = csdb.GetLogs(*st.TxHash)
 		if err != nil {
+			st.Csdb.RevertToSnapshot(preSSId)
 			return
 		}
 
@@ -222,14 +335,12 @@ func (st StateTransition) TransitionDb(ctx sdk.Context, config ChainConfig) (exe
 	}
 
 	if !st.Simulate {
-		// Finalise state if not a simulated transaction
-		// TODO: change to depend on config
-		if err = csdb.Finalise(true); err != nil {
-			return
-		}
-
-		if _, err = csdb.Commit(true); err != nil {
-			return
+		if types.HigherThanMars(ctx.BlockHeight()) {
+			if ctx.IsDeliver() {
+				csdb.IntermediateRoot(true)
+			}
+		} else {
+			csdb.Commit(true)
 		}
 	}
 
@@ -245,15 +356,12 @@ func (st StateTransition) TransitionDb(ctx sdk.Context, config ChainConfig) (exe
 		resData.ContractAddress = contractAddress
 	}
 
-	resBz, err := EncodeResultData(*resData)
+	resBz, err := EncodeResultData(resData)
 	if err != nil {
 		return
 	}
 
-	resultLog := fmt.Sprintf(
-		"executed EVM state transition; sender address %s; %s", st.Sender.String(), recipientLog,
-	)
-
+	resultLog := strings.Join([]string{"executed EVM state transition; sender address ", senderStr, "; ", recipientLog}, "")
 	exeRes = &ExecutionResult{
 		Logs:  logs,
 		Bloom: bloomInt,
@@ -267,7 +375,6 @@ func (st StateTransition) TransitionDb(ctx sdk.Context, config ChainConfig) (exe
 			GasRefunded: leftOverGas,
 		},
 	}
-
 	return
 }
 

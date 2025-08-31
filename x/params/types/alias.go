@@ -1,13 +1,13 @@
 package types
 
 import (
-	"github.com/cosmos/cosmos-sdk/x/params/types"
+	"github.com/okex/exchain/libs/cosmos-sdk/x/params/types"
 )
 
 type (
-	ParamChange   = types.ParamChange
+	ParamChange = types.ParamChange
 )
 
 var (
-	NewParamChange  = types.NewParamChange
+	NewParamChange = types.NewParamChange
 )

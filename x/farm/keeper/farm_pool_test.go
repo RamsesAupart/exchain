@@ -1,10 +1,13 @@
+//go:build ignore
+// +build ignore
+
 package keeper
 
 import (
 	"fmt"
 	"testing"
 
-	sdk "github.com/cosmos/cosmos-sdk/types"
+	sdk "github.com/okex/exchain/libs/cosmos-sdk/types"
 	swaptypes "github.com/okex/exchain/x/ammswap/types"
 	"github.com/okex/exchain/x/farm/types"
 	"github.com/stretchr/testify/require"

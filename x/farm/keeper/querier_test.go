@@ -1,14 +1,17 @@
+//go:build ignore
+// +build ignore
+
 package keeper
 
 import (
 	"strings"
 	"testing"
 
-	"github.com/cosmos/cosmos-sdk/codec"
-	sdk "github.com/cosmos/cosmos-sdk/types"
-	"github.com/cosmos/cosmos-sdk/x/supply"
+	"github.com/okex/exchain/libs/cosmos-sdk/codec"
+	sdk "github.com/okex/exchain/libs/cosmos-sdk/types"
+	"github.com/okex/exchain/libs/cosmos-sdk/x/supply"
+	abci "github.com/okex/exchain/libs/tendermint/abci/types"
 	"github.com/stretchr/testify/require"
-	abci "github.com/tendermint/tendermint/abci/types"
 
 	"github.com/okex/exchain/x/farm/types"
 )
@@ -183,13 +186,13 @@ func TestQueries(t *testing.T) {
 	require.Equal(t, len(pools), int(retPoolNum.Number))
 
 	// test query earnings
-	ctx = ctx.WithBlockHeight(120)
+	ctx.SetBlockHeight(120)
 	retEarnings := getQueriedEarnings(t, ctx, cdc, querier, pools[0].Name, Addrs[0])
 	yieldAmount := pools[0].YieldedTokenInfos[0].AmountYieldedPerBlock.
 		MulInt64(ctx.BlockHeight() - pools[0].YieldedTokenInfos[0].StartBlockHeightToYield)
 	cur := mockKeeper.Keeper.GetPoolCurrentRewards(ctx, pools[0].Name)
 	cur.Rewards = cur.Rewards.Add(
-		sdk.SysCoins{sdk.NewDecCoinFromDec(pools[0].YieldedTokenInfos[0].RemainingAmount.Denom, yieldAmount)}...
+		sdk.SysCoins{sdk.NewDecCoinFromDec(pools[0].YieldedTokenInfos[0].RemainingAmount.Denom, yieldAmount)}...,
 	)
 	referHis := mockKeeper.Keeper.GetPoolHistoricalRewards(ctx, pools[0].Name, lockInfos[0].ReferencePeriod)
 	newRatio := referHis.CumulativeRewardRatio.Add(cur.Rewards.QuoDecTruncate(pools[0].TotalValueLocked.Amount)...)

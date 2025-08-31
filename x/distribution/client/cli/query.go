@@ -6,12 +6,12 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/cosmos/cosmos-sdk/client"
-	"github.com/cosmos/cosmos-sdk/client/context"
-	"github.com/cosmos/cosmos-sdk/client/flags"
-	"github.com/cosmos/cosmos-sdk/codec"
-	sdk "github.com/cosmos/cosmos-sdk/types"
-	"github.com/cosmos/cosmos-sdk/version"
+	"github.com/okex/exchain/libs/cosmos-sdk/client"
+	"github.com/okex/exchain/libs/cosmos-sdk/client/context"
+	"github.com/okex/exchain/libs/cosmos-sdk/client/flags"
+	"github.com/okex/exchain/libs/cosmos-sdk/codec"
+	sdk "github.com/okex/exchain/libs/cosmos-sdk/types"
+	"github.com/okex/exchain/libs/cosmos-sdk/version"
 
 	"github.com/okex/exchain/x/distribution/client/common"
 	"github.com/okex/exchain/x/distribution/types"
@@ -32,6 +32,9 @@ func GetQueryCmd(queryRoute string, cdc *codec.Codec) *cobra.Command {
 		GetCmdQueryParams(queryRoute, cdc),
 		GetCmdQueryValidatorCommission(queryRoute, cdc),
 		GetCmdQueryCommunityPool(queryRoute, cdc),
+		GetCmdQueryDelegatorRewards(queryRoute, cdc),
+		GetCmdQueryValidatorOutstandingRewards(queryRoute, cdc),
+		GetCmdQueryWithdrawAddr(queryRoute, cdc),
 	)...)
 
 	return distQueryCmd

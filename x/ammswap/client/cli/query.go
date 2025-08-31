@@ -3,12 +3,12 @@ package cli
 import (
 	"fmt"
 
-	"github.com/cosmos/cosmos-sdk/client"
-	"github.com/cosmos/cosmos-sdk/client/context"
-	"github.com/cosmos/cosmos-sdk/client/flags"
-	"github.com/cosmos/cosmos-sdk/codec"
-	sdk "github.com/cosmos/cosmos-sdk/types"
-	"github.com/cosmos/cosmos-sdk/version"
+	"github.com/okex/exchain/libs/cosmos-sdk/client"
+	"github.com/okex/exchain/libs/cosmos-sdk/client/context"
+	"github.com/okex/exchain/libs/cosmos-sdk/client/flags"
+	"github.com/okex/exchain/libs/cosmos-sdk/codec"
+	sdk "github.com/okex/exchain/libs/cosmos-sdk/types"
+	"github.com/okex/exchain/libs/cosmos-sdk/version"
 	"github.com/okex/exchain/x/ammswap/types"
 	"github.com/spf13/cobra"
 	"strings"
@@ -89,7 +89,7 @@ $ %s query swap amount 100eth-245 xxb`, version.ClientName,
 				return err
 			}
 			params := types.QueryBuyAmountParams{
-				SoldToken:    sellToken,
+				SoldToken:  sellToken,
 				TokenToBuy: args[1],
 			}
 			bz, err := cdc.MarshalJSON(params)
@@ -139,19 +139,18 @@ $ %s query swap params
 	}
 }
 
-
 //GetCmdAllSwapTokenPairs lists all info of pools
 func GetCmdAllSwapTokenPairs(queryRoute string, cdc *codec.Codec) *cobra.Command {
 	return &cobra.Command{
 		Use:   "pools",
 		Short: "Query infomation of all pools",
-		Long: 	strings.TrimSpace(
+		Long: strings.TrimSpace(
 			fmt.Sprintf(`Query infomation of all pools.
 Example:
 $ exchaincli query swap pools
 `),
 		),
-		Args:  cobra.NoArgs,
+		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cliCtx := context.NewCLIContext().WithCodec(cdc)
 
@@ -161,7 +160,7 @@ $ exchaincli query swap pools
 			}
 			if res == nil || len(res) == 0 || string(res) == "null" {
 				fmt.Println("empty SwapTokenPairs")
-			}else {
+			} else {
 				fmt.Println(string(res))
 			}
 
@@ -170,19 +169,18 @@ $ exchaincli query swap pools
 	}
 }
 
-
 //GetCmdRedeemableAssets query redeemable assets by specifying the number of lpt
 func GetCmdRedeemableAssets(queryRoute string, cdc *codec.Codec) *cobra.Command {
 	return &cobra.Command{
 		Use:   "redeemable-assets [base-token] [quote-token] [pool-token-amount]",
 		Short: "Query redeemable assets by specifying pool token amount",
-		Long: 	strings.TrimSpace(
+		Long: strings.TrimSpace(
 			fmt.Sprintf(`Query redeemable assets by specifying pool token amount.
 Example:
 $ exchaincli query swap redeemable-assets eth xxb 1
 `),
 		),
-		Args:  cobra.ExactArgs(3),
+		Args: cobra.ExactArgs(3),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cliCtx := context.NewCLIContext().WithCodec(cdc)
 			baseTokenName := args[0]

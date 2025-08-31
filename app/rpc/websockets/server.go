@@ -10,17 +10,17 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/cosmos/cosmos-sdk/client/context"
-	"github.com/cosmos/cosmos-sdk/server"
 	"github.com/ethereum/go-ethereum/rpc"
 	"github.com/go-kit/kit/metrics"
 	"github.com/go-kit/kit/metrics/prometheus"
 	"github.com/gorilla/mux"
 	"github.com/gorilla/websocket"
+	"github.com/okex/exchain/libs/cosmos-sdk/client/context"
+	"github.com/okex/exchain/libs/cosmos-sdk/server"
+	"github.com/okex/exchain/libs/tendermint/libs/log"
 	"github.com/okex/exchain/x/common/monitor"
 	stdprometheus "github.com/prometheus/client_golang/prometheus"
 	"github.com/spf13/viper"
-	"github.com/tendermint/tendermint/libs/log"
 )
 
 // Server defines a server that handles Ethereum websockets.
@@ -167,17 +167,22 @@ func (s *Server) readLoop(wsConn *wsConn) {
 		}
 
 		var msg map[string]interface{}
-		err = json.Unmarshal(mb, &msg)
-		if err != nil {
-			s.sendErrResponse(wsConn, "invalid request")
+		if err = json.Unmarshal(mb, &msg); err != nil {
+			if err = s.batchCall(mb, wsConn); err != nil {
+				s.sendErrResponse(wsConn, "invalid request")
+			}
 			continue
 		}
 
 		// check if method == eth_subscribe or eth_unsubscribe
 		method := msg["method"]
-		if method.(string) == "eth_subscribe" {
-			params := msg["params"].([]interface{})
-			if len(params) == 0 {
+		methodStr, ok := method.(string)
+		if !ok {
+			s.sendErrResponse(wsConn, "invalid request")
+		}
+		if methodStr == "eth_subscribe" {
+			params, ok := msg["params"].([]interface{})
+			if !ok || len(params) == 0 {
 				s.sendErrResponse(wsConn, "invalid parameters")
 				continue
 			}
@@ -208,7 +213,7 @@ func (s *Server) readLoop(wsConn *wsConn) {
 			s.logger.Debug("successfully subscribe", "ID", id)
 			subIds[id] = struct{}{}
 			continue
-		} else if method.(string) == "eth_unsubscribe" {
+		} else if methodStr == "eth_unsubscribe" {
 			ids, ok := msg["params"].([]interface{})
 			if len(ids) == 0 {
 				s.sendErrResponse(wsConn, "invalid parameters")
@@ -288,4 +293,25 @@ func (s *Server) closeWsConnection(subIds map[rpc.ID]struct{}) {
 	defer s.connPoolLock.Unlock()
 	<-s.connPool
 	s.currentConnNum.Set(float64(len(s.connPool)))
+}
+
+func (s *Server) batchCall(mb []byte, wsConn *wsConn) error {
+	var msgs []interface{}
+	if err := json.Unmarshal(mb, &msgs); err != nil {
+		return err
+	}
+
+	for i := 0; i < len(msgs); i++ {
+		b, err := json.Marshal(msgs[i])
+		if err != nil {
+			s.sendErrResponse(wsConn, err.Error())
+			continue
+		}
+
+		err = s.tcpGetAndSendResponse(wsConn, b)
+		if err != nil {
+			s.sendErrResponse(wsConn, err.Error())
+		}
+	}
+	return nil
 }

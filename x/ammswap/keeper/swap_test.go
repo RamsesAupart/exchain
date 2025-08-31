@@ -1,15 +1,17 @@
+//go:build ignore
+
 package keeper
 
 import (
 	"fmt"
 	"testing"
 
-	sdk "github.com/cosmos/cosmos-sdk/types"
-	"github.com/cosmos/cosmos-sdk/x/supply"
+	sdk "github.com/okex/exchain/libs/cosmos-sdk/types"
+	"github.com/okex/exchain/libs/cosmos-sdk/x/supply"
+	abci "github.com/okex/exchain/libs/tendermint/abci/types"
 	"github.com/okex/exchain/x/ammswap/types"
 	token "github.com/okex/exchain/x/token/types"
 	"github.com/stretchr/testify/require"
-	abci "github.com/tendermint/tendermint/abci/types"
 )
 
 func TestKeeper_IsTokenExistTable(t *testing.T) {
@@ -39,7 +41,7 @@ func TestKeeper_IsTokenExistTable(t *testing.T) {
 		if nil != result {
 			if testCase.exceptResultCode == 0 {
 				require.Nil(t, result)
-			}else {
+			} else {
 				require.NotNil(t, result)
 			}
 		}

@@ -10,9 +10,9 @@ import (
 	ethaccounts "github.com/ethereum/go-ethereum/accounts"
 	ethcrypto "github.com/ethereum/go-ethereum/crypto"
 
-	tmcrypto "github.com/tendermint/tendermint/crypto"
+	tmcrypto "github.com/okex/exchain/libs/tendermint/crypto"
 
-	"github.com/cosmos/cosmos-sdk/crypto/keys"
+	"github.com/okex/exchain/libs/cosmos-sdk/crypto/keys"
 
 	"github.com/okex/exchain/app/crypto/ethsecp256k1"
 )
@@ -79,7 +79,7 @@ func DeriveSecp256k1(mnemonic, bip39Passphrase, path string) ([]byte, error) {
 
 	key := masterKey
 	for _, n := range hdpath {
-		key, err = key.Child(n)
+		key, err = key.Derive(n)
 		if err != nil {
 			return nil, err
 		}

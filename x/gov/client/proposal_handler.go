@@ -1,10 +1,11 @@
 package client
 
 import (
+	interfacetypes "github.com/okex/exchain/libs/cosmos-sdk/codec/types"
 	"github.com/spf13/cobra"
 
-	"github.com/cosmos/cosmos-sdk/client/context"
-	"github.com/cosmos/cosmos-sdk/codec"
+	"github.com/okex/exchain/libs/cosmos-sdk/client/context"
+	"github.com/okex/exchain/libs/cosmos-sdk/codec"
 	"github.com/okex/exchain/x/gov/client/rest"
 )
 
@@ -12,7 +13,7 @@ import (
 type RESTHandlerFn func(context.CLIContext) rest.ProposalRESTHandler
 
 // function to create the cli handler
-type CLIHandlerFn func(*codec.Codec) *cobra.Command
+type CLIHandlerFn func(proxy *codec.CodecProxy, reg interfacetypes.InterfaceRegistry) *cobra.Command
 
 // The combined type for a proposal handler for both cli and rest
 type ProposalHandler struct {

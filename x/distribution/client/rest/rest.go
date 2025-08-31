@@ -5,10 +5,10 @@ import (
 
 	"github.com/gorilla/mux"
 
-	"github.com/cosmos/cosmos-sdk/client/context"
-	sdk "github.com/cosmos/cosmos-sdk/types"
-	"github.com/cosmos/cosmos-sdk/types/rest"
-	"github.com/cosmos/cosmos-sdk/x/auth/client/utils"
+	"github.com/okex/exchain/libs/cosmos-sdk/client/context"
+	sdk "github.com/okex/exchain/libs/cosmos-sdk/types"
+	"github.com/okex/exchain/libs/cosmos-sdk/types/rest"
+	"github.com/okex/exchain/libs/cosmos-sdk/x/auth/client/utils"
 
 	comm "github.com/okex/exchain/x/common"
 	"github.com/okex/exchain/x/distribution/types"
@@ -22,15 +22,15 @@ func RegisterRoutes(cliCtx context.CLIContext, r *mux.Router, queryRoute string)
 	registerTxRoutes(cliCtx, r, queryRoute)
 }
 
-// ProposalRESTHandler returns a ProposalRESTHandler that exposes the community pool spend REST handler with a given sub-route.
-func ProposalRESTHandler(cliCtx context.CLIContext) govrest.ProposalRESTHandler {
+// CommunityPoolSpendProposalRESTHandler returns a CommunityPoolSpendProposalRESTHandler that exposes the community pool spend REST handler with a given sub-route.
+func CommunityPoolSpendProposalRESTHandler(cliCtx context.CLIContext) govrest.ProposalRESTHandler {
 	return govrest.ProposalRESTHandler{
 		SubRoute: "community_pool_spend",
-		Handler:  postProposalHandlerFn(cliCtx),
+		Handler:  postCommunityPoolSpendProposalHandlerFn(cliCtx),
 	}
 }
 
-func postProposalHandlerFn(cliCtx context.CLIContext) http.HandlerFunc {
+func postCommunityPoolSpendProposalHandlerFn(cliCtx context.CLIContext) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req CommunityPoolSpendProposalReq
 		if !rest.ReadRESTReq(w, r, cliCtx.Codec, &req) {

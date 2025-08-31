@@ -3,8 +3,8 @@ package types
 import (
 	"time"
 
-	sdk "github.com/cosmos/cosmos-sdk/types"
-	"github.com/cosmos/cosmos-sdk/x/supply"
+	sdk "github.com/okex/exchain/libs/cosmos-sdk/types"
+	"github.com/okex/exchain/libs/cosmos-sdk/x/supply"
 	"github.com/okex/exchain/x/common"
 	"github.com/okex/exchain/x/token"
 	tokentypes "github.com/okex/exchain/x/token/types"
@@ -29,7 +29,7 @@ func GetTestSwapTokenPair() SwapTokenPair {
 func SetTestTokens(ctx sdk.Context, tokenKeeper token.Keeper, supplyKeeper supply.Keeper, addr sdk.AccAddress, coins sdk.DecCoins) error {
 	for _, coin := range coins {
 		name := coin.Denom
-		tokenKeeper.NewToken(ctx, tokentypes.Token{"", name, name,name, coin.Amount, 1,addr,true})
+		tokenKeeper.NewToken(ctx, tokentypes.Token{"", name, name, name, coin.Amount, 1, addr, true})
 	}
 	err := supplyKeeper.MintCoins(ctx, tokentypes.ModuleName, coins)
 	if err != nil {

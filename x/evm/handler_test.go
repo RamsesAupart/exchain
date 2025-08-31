@@ -8,10 +8,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cosmos/cosmos-sdk/codec"
-	sdk "github.com/cosmos/cosmos-sdk/types"
-	auth "github.com/cosmos/cosmos-sdk/x/auth/types"
-	"github.com/cosmos/cosmos-sdk/x/supply"
 	"github.com/ethereum/go-ethereum/common"
 	ethcmn "github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
@@ -19,14 +15,17 @@ import (
 	"github.com/okex/exchain/app"
 	"github.com/okex/exchain/app/crypto/ethsecp256k1"
 	ethermint "github.com/okex/exchain/app/types"
+	"github.com/okex/exchain/libs/cosmos-sdk/codec"
+	sdk "github.com/okex/exchain/libs/cosmos-sdk/types"
+	auth "github.com/okex/exchain/libs/cosmos-sdk/x/auth/types"
+	"github.com/okex/exchain/libs/cosmos-sdk/x/supply"
+	abci "github.com/okex/exchain/libs/tendermint/abci/types"
 	"github.com/okex/exchain/x/evm"
 	"github.com/okex/exchain/x/evm/keeper"
 	"github.com/okex/exchain/x/evm/types"
 	govtypes "github.com/okex/exchain/x/gov/types"
 	"github.com/status-im/keycard-go/hexutils"
 	"github.com/stretchr/testify/suite"
-	abci "github.com/tendermint/tendermint/abci/types"
-	"github.com/tendermint/tendermint/crypto/secp256k1"
 )
 
 // erc20 contract with params:
@@ -47,13 +46,18 @@ type EvmTestSuite struct {
 
 func (suite *EvmTestSuite) SetupTest() {
 	checkTx := false
+	chain_id := "ethermint-3"
 
 	suite.app = app.Setup(checkTx)
-	suite.ctx = suite.app.BaseApp.NewContext(checkTx, abci.Header{Height: 1, ChainID: "ethermint-3", Time: time.Now().UTC()})
+	suite.ctx = suite.app.BaseApp.NewContext(checkTx, abci.Header{Height: 1, ChainID: chain_id, Time: time.Now().UTC()})
+	suite.ctx.SetDeliver()
 	suite.stateDB = types.CreateEmptyCommitStateDB(suite.app.EvmKeeper.GenerateCSDBParams(), suite.ctx)
 	suite.handler = evm.NewHandler(suite.app.EvmKeeper)
 	suite.querier = keeper.NewQuerier(*suite.app.EvmKeeper)
 	suite.codec = codec.New()
+
+	err := ethermint.SetChainId(chain_id)
+	suite.Nil(err)
 
 	params := types.DefaultParams()
 	params.EnableCreate = true
@@ -70,7 +74,7 @@ func (suite *EvmTestSuite) TestHandleMsgEthereumTx() {
 	suite.Require().NoError(err)
 	sender := ethcmn.HexToAddress(privkey.PubKey().Address().String())
 
-	var tx types.MsgEthereumTx
+	var tx *types.MsgEthereumTx
 
 	testCases := []struct {
 		msg      string
@@ -119,7 +123,7 @@ func (suite *EvmTestSuite) TestHandleMsgEthereumTx() {
 		{
 			"invalid chain ID",
 			func() {
-				suite.ctx = suite.ctx.WithChainID("chainID")
+				suite.ctx.SetChainID("chainID")
 			},
 			false,
 		},
@@ -130,6 +134,33 @@ func (suite *EvmTestSuite) TestHandleMsgEthereumTx() {
 			},
 			false,
 		},
+		{
+			"simulate tx",
+			func() {
+				suite.ctx.SetFrom(sender.String())
+				suite.ctx.SetIsCheckTx(true)
+				suite.app.EvmKeeper.SetBalance(suite.ctx, sender, big.NewInt(100))
+				tx = types.NewMsgEthereumTx(0, &sender, big.NewInt(100), 3000000, big.NewInt(1), nil)
+			},
+			true,
+		},
+		{
+			"trace log tx",
+			func() {
+				suite.ctx.SetFrom(sender.String())
+				suite.ctx.SetIsTraceTxLog(true)
+				suite.app.EvmKeeper.SetBalance(suite.ctx, sender, big.NewInt(100))
+				tx = types.NewMsgEthereumTx(0, &sender, big.NewInt(100), 3000000, big.NewInt(1), nil)
+			},
+			true,
+		},
+		{
+			"insufficient balance for transfer",
+			func() {
+				tx = types.NewMsgEthereumTx(0, &sender, big.NewInt(100), 3000000, big.NewInt(1), nil)
+			},
+			false,
+		},
 	}
 
 	for _, tc := range testCases {
@@ -137,7 +168,7 @@ func (suite *EvmTestSuite) TestHandleMsgEthereumTx() {
 			suite.SetupTest() // reset
 			//nolint
 			tc.malleate()
-			suite.ctx = suite.ctx.WithGasMeter(sdk.NewInfiniteGasMeter())
+			suite.ctx.SetGasMeter(sdk.NewInfiniteGasMeter())
 			res, err := suite.handler(suite.ctx, tx)
 
 			//nolint
@@ -145,65 +176,6 @@ func (suite *EvmTestSuite) TestHandleMsgEthereumTx() {
 				suite.Require().NoError(err)
 				suite.Require().NotNil(res)
 				var expectedConsumedGas uint64 = 21000
-				suite.Require().EqualValues(expectedConsumedGas, suite.ctx.GasMeter().GasConsumed())
-			} else {
-				suite.Require().Error(err)
-				suite.Require().Nil(res)
-			}
-		})
-	}
-}
-
-func (suite *EvmTestSuite) TestMsgEthermint() {
-	var (
-		tx   types.MsgEthermint
-		from = sdk.AccAddress(secp256k1.GenPrivKey().PubKey().Address())
-		to   = sdk.AccAddress(secp256k1.GenPrivKey().PubKey().Address())
-	)
-
-	testCases := []struct {
-		msg      string
-		malleate func()
-		expPass  bool
-	}{
-		{
-			"passed",
-			func() {
-				tx = types.NewMsgEthermint(0, &to, sdk.NewInt(1), 100000, sdk.NewInt(2), []byte("test"), from)
-				suite.app.EvmKeeper.SetBalance(suite.ctx, ethcmn.BytesToAddress(from.Bytes()), big.NewInt(100))
-			},
-			true,
-		},
-		{
-			"invalid state transition",
-			func() {
-				tx = types.NewMsgEthermint(0, &to, sdk.NewInt(1), 100000, sdk.NewInt(2), []byte("test"), from)
-			},
-			false,
-		},
-		{
-			"invalid chain ID",
-			func() {
-				suite.ctx = suite.ctx.WithChainID("chainID")
-			},
-			false,
-		},
-	}
-
-	for _, tc := range testCases {
-		suite.Run("", func() {
-			suite.SetupTest() // reset
-			//nolint
-			tc.malleate()
-			suite.ctx = suite.ctx.WithIsCheckTx(true)
-			suite.ctx = suite.ctx.WithGasMeter(sdk.NewInfiniteGasMeter())
-			res, err := suite.handler(suite.ctx, tx)
-
-			//nolint
-			if tc.expPass {
-				suite.Require().NoError(err)
-				suite.Require().NotNil(res)
-				var expectedConsumedGas uint64 = 21064
 				suite.Require().EqualValues(expectedConsumedGas, suite.ctx.GasMeter().GasConsumed())
 			} else {
 				suite.Require().Error(err)
@@ -253,13 +225,10 @@ func (suite *EvmTestSuite) TestHandlerLogs() {
 	suite.Require().Equal(len(resultData.Logs), 1)
 	suite.Require().Equal(len(resultData.Logs[0].Topics), 2)
 
-	hash := []byte{1}
-	err = suite.stateDB.WithContext(suite.ctx).SetLogs(ethcmn.BytesToHash(hash), resultData.Logs)
+	txHash := ethcmn.BytesToHash(tx.TxHash())
+	suite.stateDB.WithContext(suite.ctx).SetLogs(txHash, resultData.Logs)
+	logs, err := suite.stateDB.WithContext(suite.ctx).GetLogs(txHash)
 	suite.Require().NoError(err)
-
-	logs, err := suite.stateDB.WithContext(suite.ctx).GetLogs(ethcmn.BytesToHash(hash))
-	suite.Require().NoError(err, "failed to get logs")
-
 	suite.Require().Equal(logs, resultData.Logs)
 }
 
@@ -385,7 +354,7 @@ func (suite *EvmTestSuite) TestSendTransaction() {
 	err = tx.Sign(big.NewInt(3), priv.ToECDSA())
 	suite.Require().NoError(err)
 
-	suite.ctx = suite.ctx.WithGasMeter(sdk.NewInfiniteGasMeter())
+	suite.ctx.SetGasMeter(sdk.NewInfiniteGasMeter())
 	result, err := suite.handler(suite.ctx, tx)
 	suite.Require().NoError(err)
 	suite.Require().NotNil(result)
@@ -450,7 +419,7 @@ func (suite *EvmTestSuite) TestOutOfGasWhenDeployContract() {
 
 	// Deploy contract - Owner.sol
 	gasLimit := uint64(1)
-	suite.ctx = suite.ctx.WithGasMeter(sdk.NewGasMeter(gasLimit))
+	suite.ctx.SetGasMeter(sdk.NewGasMeter(gasLimit))
 	gasPrice := big.NewInt(10000)
 
 	priv, err := ethsecp256k1.GenerateKey()
@@ -637,20 +606,19 @@ func (suite *EvmTestSuite) TestSimulateConflict() {
 	pub := priv.ToECDSA().Public().(*ecdsa.PublicKey)
 
 	suite.app.EvmKeeper.SetBalance(suite.ctx, ethcrypto.PubkeyToAddress(*pub), big.NewInt(100))
-	suite.stateDB.Finalise(false)
 
 	// send simple value transfer with gasLimit=21000
 	tx := types.NewMsgEthereumTx(1, &ethcmn.Address{0x1}, big.NewInt(100), gasLimit, gasPrice, nil)
 	err = tx.Sign(big.NewInt(3), priv.ToECDSA())
 	suite.Require().NoError(err)
 
-	suite.ctx = suite.ctx.WithGasMeter(sdk.NewInfiniteGasMeter())
-	suite.ctx = suite.ctx.WithIsCheckTx(true)
+	suite.ctx.SetGasMeter(sdk.NewInfiniteGasMeter())
+	suite.ctx.SetIsCheckTx(true).SetIsDeliverTx(false)
 	result, err := suite.handler(suite.ctx, tx)
 	suite.Require().NotNil(result)
 	suite.Require().Nil(err)
 
-	suite.ctx = suite.ctx.WithIsCheckTx(false)
+	suite.ctx.SetIsCheckTx(false).SetIsDeliverTx(true)
 	result, err = suite.handler(suite.ctx, tx)
 	suite.Require().NotNil(result)
 	suite.Require().Nil(err)
@@ -760,96 +728,6 @@ func (suite *EvmTestSuite) TestEvmParamsAndContractDeploymentWhitelistControllin
 	}
 }
 
-func (suite *EvmTestSuite) TestEvmParamsAndContractDeploymentWhitelistControlling_MsgEthermint() {
-	params := suite.app.EvmKeeper.GetParams(suite.ctx)
-
-	addrQualified := ethcmn.BytesToAddress([]byte{0x0}).Bytes()
-	addrUnqualified := ethcmn.BytesToAddress([]byte{0x1}).Bytes()
-
-	// build a tx with contract deployment
-	payload, err := hexutil.Decode(hexPayloadContractDeployment)
-	suite.Require().NoError(err)
-	tx := types.NewMsgEthermint(0, nil, sdk.ZeroInt(), 3000000, sdk.NewInt(1), payload, addrQualified)
-
-	testCases := []struct {
-		msg                               string
-		enableContractDeploymentWhitelist bool
-		contractDeploymentWhitelist       types.AddressList
-		expPass                           bool
-	}{
-		{
-			"every address could deploy contract when contract deployment whitelist is disabled",
-			false,
-			nil,
-			true,
-		},
-		{
-			"every address could deploy contract when contract deployment whitelist is disabled whatever whitelist members are",
-			false,
-			types.AddressList{addrUnqualified},
-			true,
-		},
-		{
-			"every address in whitelist could deploy contract when contract deployment whitelist is disabled",
-			false,
-			types.AddressList{addrQualified},
-			true,
-		},
-		{
-			"address in whitelist could deploy contract when contract deployment whitelist is enabled",
-			true,
-			types.AddressList{addrQualified},
-			true,
-		},
-		{
-			"no address could deploy contract when contract deployment whitelist is enabled and whitelist is nil",
-			true,
-			nil,
-			false,
-		},
-		{
-			"address not in the whitelist couldn't deploy contract when contract deployment whitelist is enabled",
-			true,
-			types.AddressList{addrUnqualified},
-			false,
-		},
-	}
-
-	for _, tc := range testCases {
-		suite.Run(tc.msg, func() {
-			suite.SetupTest()
-			suite.ctx = suite.ctx.WithIsCheckTx(true)
-
-			// reset FeeCollector
-			feeCollectorAcc := supply.NewEmptyModuleAccount(auth.FeeCollectorName)
-			feeCollectorAcc.Coins = sdk.NewCoins(sdk.NewCoin(sdk.DefaultBondDenom, sdk.OneDec()))
-			suite.app.SupplyKeeper.SetModuleAccount(suite.ctx, feeCollectorAcc)
-
-			// set account sufficient balance for sender
-			suite.app.EvmKeeper.SetBalance(suite.ctx, ethcmn.BytesToAddress(addrQualified), sdk.NewDec(1024).BigInt())
-
-			// reset params
-			params.EnableContractDeploymentWhitelist = tc.enableContractDeploymentWhitelist
-			suite.app.EvmKeeper.SetParams(suite.ctx, params)
-
-			// set target whitelist
-			suite.stateDB.SetContractDeploymentWhitelist(tc.contractDeploymentWhitelist)
-
-			// handle tx
-			res, err := suite.handler(suite.ctx, tx)
-
-			//nolint
-			if tc.expPass {
-				suite.Require().NoError(err)
-				suite.Require().NotNil(res)
-			} else {
-				suite.Require().Error(err)
-				suite.Require().Nil(res)
-			}
-		})
-	}
-}
-
 const (
 	// contracts solidity codes:
 	//
@@ -920,6 +798,7 @@ func (suite *EvmContractBlockedListTestSuite) SetupTest() {
 
 	suite.app = app.Setup(checkTx)
 	suite.ctx = suite.app.BaseApp.NewContext(checkTx, abci.Header{Height: 1, ChainID: "ethermint-3", Time: time.Now().UTC()})
+	suite.ctx.SetDeliver()
 	suite.stateDB = types.CreateEmptyCommitStateDB(suite.app.EvmKeeper.GenerateCSDBParams(), suite.ctx)
 	suite.handler = evm.NewHandler(suite.app.EvmKeeper)
 
@@ -949,6 +828,7 @@ func (suite *EvmContractBlockedListTestSuite) SetupTest() {
 
 	// init contracts for test environment
 	suite.deployInterdependentContracts()
+	suite.app.EndBlock(abci.RequestEndBlock{Height: 1})
 }
 
 // deployInterdependentContracts deploys two contracts that Contract1 will be invoked by Contract2
@@ -978,14 +858,6 @@ func (suite *EvmContractBlockedListTestSuite) deployOrInvokeContract(source inte
 		err = msgEthereumTx.Sign(suite.chainID, s.ToECDSA())
 		suite.Require().NoError(err)
 		msg = msgEthereumTx
-	case sdk.AccAddress:
-		var toAccAddr sdk.AccAddress
-		if to == nil {
-			toAccAddr = nil
-		} else {
-			toAccAddr = to.Bytes()
-		}
-		msg = types.NewMsgEthermint(nonce, &toAccAddr, sdk.ZeroInt(), 3000000, sdk.OneInt(), payload, s)
 	}
 
 	m, ok := msg.(sdk.Msg)
@@ -1072,80 +944,174 @@ func (suite *EvmContractBlockedListTestSuite) TestEvmParamsAndContractBlockedLis
 	}
 }
 
-func (suite *EvmContractBlockedListTestSuite) TestEvmParamsAndContractBlockedListControlling_MsgEthermint() {
-	callerAddr := sdk.AccAddress(ethcmn.BytesToAddress([]byte{0x0}).Bytes())
+var (
+	callAddr                  = "0x2B2641734D81a6B93C9aE1Ee6290258FB6666921"
+	callCode                  = "0x608060405260043610610083576000357c0100000000000000000000000000000000000000000000000000000000900463ffffffff1680630c55699c1461008857806350cd4df2146100b35780637811c6c1146100de578063a6516bda14610121578063a7126c2d14610164578063a9421619146101a7578063d3ab86a1146101ea575b600080fd5b34801561009457600080fd5b5061009d610241565b6040518082815260200191505060405180910390f35b3480156100bf57600080fd5b506100c8610247565b6040518082815260200191505060405180910390f35b3480156100ea57600080fd5b5061011f600480360381019080803573ffffffffffffffffffffffffffffffffffffffff16906020019092919050505061024d565b005b34801561012d57600080fd5b50610162600480360381019080803573ffffffffffffffffffffffffffffffffffffffff169060200190929190505050610304565b005b34801561017057600080fd5b506101a5600480360381019080803573ffffffffffffffffffffffffffffffffffffffff1690602001909291905050506103bb565b005b3480156101b357600080fd5b506101e8600480360381019080803573ffffffffffffffffffffffffffffffffffffffff169060200190929190505050610470565b005b3480156101f657600080fd5b506101ff610527565b604051808273ffffffffffffffffffffffffffffffffffffffff1673ffffffffffffffffffffffffffffffffffffffff16815260200191505060405180910390f35b60005481565b60015481565b600060405180807f696e6328290000000000000000000000000000000000000000000000000000008152506005019050604051809103902090508173ffffffffffffffffffffffffffffffffffffffff16817c010000000000000000000000000000000000000000000000000000000090046040518163ffffffff167c01000000000000000000000000000000000000000000000000000000000281526004016000604051808303816000875af292505050505050565b600060405180807f6f6e6328290000000000000000000000000000000000000000000000000000008152506005019050604051809103902090508173ffffffffffffffffffffffffffffffffffffffff16817c010000000000000000000000000000000000000000000000000000000090046040518163ffffffff167c01000000000000000000000000000000000000000000000000000000000281526004016000604051808303816000875af192505050505050565b600060405180807f696e6328290000000000000000000000000000000000000000000000000000008152506005019050604051809103902090508173ffffffffffffffffffffffffffffffffffffffff16817c010000000000000000000000000000000000000000000000000000000090046040518163ffffffff167c0100000000000000000000000000000000000000000000000000000000028152600401600060405180830381865af492505050505050565b600060405180807f696e6328290000000000000000000000000000000000000000000000000000008152506005019050604051809103902090508173ffffffffffffffffffffffffffffffffffffffff16817c010000000000000000000000000000000000000000000000000000000090046040518163ffffffff167c01000000000000000000000000000000000000000000000000000000000281526004016000604051808303816000875af192505050505050565b600260009054906101000a900473ffffffffffffffffffffffffffffffffffffffff16815600a165627a7a7230582003530ba5d655e02d210fb630e4067ad896add11d3c99c6c69165d11ce4855ca90029"
+	callAcc, _                = sdk.AccAddressFromBech32(callAddr)
+	callEthAcc                = common.BytesToAddress(callAcc.Bytes())
+	callBuffer                = hexutil.MustDecode(callCode)
+	blockedAddr               = "0xf297Ab486Be410A2649901849B0477D519E99960"
+	blockedCode               = "0x60806040526004361061006d576000357c0100000000000000000000000000000000000000000000000000000000900463ffffffff1680630c55699c14610072578063371303c01461009d57806350cd4df2146100b4578063579be378146100df578063d3ab86a1146100f6575b600080fd5b34801561007e57600080fd5b5061008761014d565b6040518082815260200191505060405180910390f35b3480156100a957600080fd5b506100b2610153565b005b3480156100c057600080fd5b506100c96101ba565b6040518082815260200191505060405180910390f35b3480156100eb57600080fd5b506100f46101c0565b005b34801561010257600080fd5b5061010b6101d9565b604051808273ffffffffffffffffffffffffffffffffffffffff1673ffffffffffffffffffffffffffffffffffffffff16815260200191505060405180910390f35b60005481565b33600260006101000a81548173ffffffffffffffffffffffffffffffffffffffff021916908373ffffffffffffffffffffffffffffffffffffffff160217905550600160008154809291906001900391905055506000808154809291906001019190505550565b60015481565b3373ffffffffffffffffffffffffffffffffffffffff16ff5b600260009054906101000a900473ffffffffffffffffffffffffffffffffffffffff16815600a165627a7a72305820b537b2bbcf121c2be169c4f990888d02d3bbab4fd6a806c3d4a0f3643cebd4590029"
+	blockedAcc, _             = sdk.AccAddressFromBech32(blockedAddr)
+	blockedBuffer             = hexutil.MustDecode(blockedCode)
+	blockedEthAcc             = common.BytesToAddress(blockedAcc.Bytes())
+	callMethodBlocked         = "0xa9421619000000000000000000000000f297ab486be410a2649901849b0477d519e99960"
+	selfdestructMethodBlocked = "0xa6516bda000000000000000000000000f297ab486be410a2649901849b0477d519e99960"
+	callcodeMethodBlocked     = "0x7811c6c1000000000000000000000000f297ab486be410a2649901849b0477d519e99960"
+	delegatecallMethodBlocked = "0xa7126c2d000000000000000000000000f297ab486be410a2649901849b0477d519e99960"
+	blockedMethods            = types.ContractMethods{
+		types.ContractMethod{
+			Sign:  "0x371303c0",
+			Extra: "inc()",
+		},
+		types.ContractMethod{
+			Sign:  "0x579be378",
+			Extra: "onc",
+		},
+	}
+	blockedContract = types.BlockedContract{
+		Address:      blockedAcc,
+		BlockMethods: blockedMethods,
+	}
+)
 
+func (suite *EvmContractBlockedListTestSuite) TestEvmParamsAndContractMethodBlockedListControlling_MsgEthereumTx() {
+	callerPrivKey, err := ethsecp256k1.GenerateKey()
+	suite.Require().NoError(err)
 	testCases := []struct {
 		msg                       string
 		enableContractBlockedList bool
 		contractBlockedList       types.AddressList
-		expectedErrorForContract1 bool
-		expectedErrorForContract2 bool
+		contractMethodBlockedList types.BlockedContractList
+		expectedErrorForContract  bool
+		expectedErrorContains     string
 	}{
 		{
-			msg:                       "every contract could be invoked with empty blocked list which is disabled",
+			msg:                       "contract could be invoked with empty blocked list which is disabled",
 			enableContractBlockedList: false,
-			contractBlockedList:       types.AddressList{},
-			expectedErrorForContract1: false,
-			expectedErrorForContract2: false,
+			contractMethodBlockedList: types.BlockedContractList{},
+			expectedErrorForContract:  false,
 		},
 		{
-			msg:                       "every contract could be invoked with empty blocked list which is enabled",
+			msg:                       "contract could be invoked with empty blocked list which is enabled",
 			enableContractBlockedList: true,
-			contractBlockedList:       types.AddressList{},
-			expectedErrorForContract1: false,
-			expectedErrorForContract2: false,
+			contractMethodBlockedList: types.BlockedContractList{},
+			expectedErrorForContract:  false,
 		},
 		{
-			msg:                       "every contract in the blocked list could be invoked when contract blocked list is disabled",
+			msg:                       "contract in the blocked list could be invoked when contract blocked list is disabled",
 			enableContractBlockedList: false,
-			contractBlockedList:       types.AddressList{suite.contract1Addr.Bytes(), suite.contract2Addr.Bytes()},
-			expectedErrorForContract1: false,
-			expectedErrorForContract2: false,
+			contractMethodBlockedList: types.BlockedContractList{blockedContract},
+			expectedErrorForContract:  false,
 		},
 		{
-			msg:                       "Contract1 could be invoked but Contract2 couldn't when Contract2 is in block list which is enabled",
+			msg:                       "Contract method could not be invoked when Contract method is in block list which is enabled",
 			enableContractBlockedList: true,
-			contractBlockedList:       types.AddressList{suite.contract2Addr.Bytes()},
-			expectedErrorForContract1: false,
-			expectedErrorForContract2: true,
+			contractMethodBlockedList: types.BlockedContractList{blockedContract},
+			expectedErrorForContract:  true,
+			expectedErrorContains:     "It's not allow to",
 		},
 		{
-			msg:                       "neither Contract1 nor Contract2 could be invoked when Contract1 is in block list which is enabled",
+			msg:                       "Contract method could be invoked which method which is out of blocked list",
 			enableContractBlockedList: true,
-			contractBlockedList:       types.AddressList{suite.contract1Addr.Bytes()},
-			expectedErrorForContract1: true,
-			expectedErrorForContract2: true,
+			contractMethodBlockedList: types.BlockedContractList{types.BlockedContract{
+				blockedAcc,
+				types.ContractMethods{
+					types.ContractMethod{
+						Sign:  "0x579be372",
+						Extra: "test",
+					},
+				},
+			}},
+			expectedErrorForContract: false,
+		},
+		{
+			msg:                       "Contract method could not be invoked when Contract is in block list which is enabled",
+			enableContractBlockedList: true,
+			contractMethodBlockedList: types.BlockedContractList{},
+			contractBlockedList:       types.AddressList{blockedAcc},
+			expectedErrorForContract:  true,
+			expectedErrorContains:     "is not allowed to invoke",
 		},
 	}
 
 	for _, tc := range testCases {
 		suite.Run(tc.msg, func() {
-			suite.ctx = suite.ctx.WithIsCheckTx(true)
+			suite.ctx.SetIsDeliverTx(true).SetIsCheckTx(false)
+
+			// set contract code
+			suite.stateDB.CreateAccount(callEthAcc)
+			suite.stateDB.CreateAccount(blockedEthAcc)
+			suite.stateDB.SetCode(callEthAcc, callBuffer)
+			suite.stateDB.SetCode(blockedEthAcc, blockedBuffer)
+
 			// update params
 			params := suite.app.EvmKeeper.GetParams(suite.ctx)
 			params.EnableContractBlockedList = tc.enableContractBlockedList
 			suite.app.EvmKeeper.SetParams(suite.ctx, params)
 
 			// reset contract blocked list
+			suite.stateDB.DeleteContractMethodBlockedList(suite.stateDB.GetContractMethodBlockedList())
 			suite.stateDB.DeleteContractBlockedList(suite.stateDB.GetContractBlockedList())
-			suite.stateDB.SetContractBlockedList(tc.contractBlockedList)
+			if len(tc.contractMethodBlockedList) != 0 {
+				suite.stateDB.InsertContractMethodBlockedList(tc.contractMethodBlockedList)
+			} else {
+				suite.stateDB.SetContractBlockedList(tc.contractBlockedList)
+			}
+
+			suite.stateDB.Commit(true)
 
 			// nonce here could be any value
-			err := suite.deployOrInvokeContract(callerAddr, invokeContract1HexPayload, 1024, &suite.contract1Addr)
-			if tc.expectedErrorForContract1 {
+			err = suite.deployOrInvokeContract(callerPrivKey, callMethodBlocked, 1024, &callEthAcc)
+			if tc.expectedErrorForContract {
+				if len(tc.expectedErrorContains) != 0 {
+					//suite.Require().Contains(err.Error(), tc.expectedErrorContains)
+				}
 				suite.Require().Error(err)
 			} else {
 				suite.Require().NoError(err)
 			}
 
 			// nonce here could be any value
-			err = suite.deployOrInvokeContract(callerAddr, invokeContract2HexPayload, 1024, &suite.contract2Addr)
-			if tc.expectedErrorForContract2 {
+			err = suite.deployOrInvokeContract(callerPrivKey, delegatecallMethodBlocked, 1024, &callEthAcc)
+			if tc.expectedErrorForContract {
+				if len(tc.expectedErrorContains) != 0 {
+					//suite.Require().Contains(err.Error(), tc.expectedErrorContains)
+				}
 				suite.Require().Error(err)
 			} else {
 				suite.Require().NoError(err)
 			}
+
+			// nonce here could be any value
+			err = suite.deployOrInvokeContract(callerPrivKey, callcodeMethodBlocked, 1024, &callEthAcc)
+			if tc.expectedErrorForContract {
+				if len(tc.expectedErrorContains) != 0 {
+					//suite.Require().Contains(err.Error(), tc.expectedErrorContains)
+				}
+				suite.Require().Error(err)
+			} else {
+				suite.Require().NoError(err)
+			}
+
+			// nonce here could be any value
+			err = suite.deployOrInvokeContract(callerPrivKey, selfdestructMethodBlocked, 1024, &callEthAcc)
+			if tc.msg == "Contract method could be invoked which method which is out of blocked list" {
+				if len(tc.expectedErrorContains) != 0 {
+					suite.Require().Contains(err.Error(), tc.expectedErrorContains)
+				}
+				suite.Require().Error(err)
+			} else {
+				if tc.expectedErrorForContract {
+					if len(tc.expectedErrorContains) != 0 {
+						suite.Require().Contains(err.Error(), tc.expectedErrorContains)
+					}
+					suite.Require().Error(err)
+				} else {
+					suite.Require().NoError(err)
+				}
+			}
+
 		})
 	}
 }

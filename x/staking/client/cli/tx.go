@@ -7,21 +7,21 @@ import (
 
 	"github.com/okex/exchain/x/common"
 
-	"github.com/cosmos/cosmos-sdk/client/flags"
+	"github.com/okex/exchain/libs/cosmos-sdk/client/flags"
 
 	"github.com/spf13/cobra"
 	flag "github.com/spf13/pflag"
 	"github.com/spf13/viper"
 
-	cfg "github.com/tendermint/tendermint/config"
-	"github.com/tendermint/tendermint/crypto"
+	cfg "github.com/okex/exchain/libs/tendermint/config"
+	"github.com/okex/exchain/libs/tendermint/crypto"
 
-	"github.com/cosmos/cosmos-sdk/client"
-	"github.com/cosmos/cosmos-sdk/client/context"
-	"github.com/cosmos/cosmos-sdk/codec"
-	sdk "github.com/cosmos/cosmos-sdk/types"
-	"github.com/cosmos/cosmos-sdk/x/auth"
-	"github.com/cosmos/cosmos-sdk/x/auth/client/utils"
+	"github.com/okex/exchain/libs/cosmos-sdk/client"
+	"github.com/okex/exchain/libs/cosmos-sdk/client/context"
+	"github.com/okex/exchain/libs/cosmos-sdk/codec"
+	sdk "github.com/okex/exchain/libs/cosmos-sdk/types"
+	"github.com/okex/exchain/libs/cosmos-sdk/x/auth"
+	"github.com/okex/exchain/libs/cosmos-sdk/x/auth/client/utils"
 	"github.com/okex/exchain/x/staking/types"
 )
 
@@ -40,6 +40,7 @@ func GetTxCmd(storeKey string, cdc *codec.Codec) *cobra.Command {
 			GetCmdCreateValidator(cdc),
 			GetCmdDestroyValidator(cdc),
 			GetCmdEditValidator(cdc),
+			GetCmdEditValidatorCommissionRate(cdc),
 			GetCmdDeposit(cdc),
 			GetCmdWithdraw(cdc),
 			GetCmdAddShares(cdc),

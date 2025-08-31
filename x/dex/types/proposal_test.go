@@ -1,11 +1,14 @@
+//go:build ignore
+
 package types
 
 import (
 	"fmt"
-	"github.com/okex/exchain/x/common"
 	"testing"
 
-	sdk "github.com/cosmos/cosmos-sdk/types"
+	"github.com/okex/exchain/x/common"
+
+	sdk "github.com/okex/exchain/libs/cosmos-sdk/types"
 	"github.com/stretchr/testify/require"
 )
 

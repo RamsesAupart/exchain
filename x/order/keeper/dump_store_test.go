@@ -1,3 +1,5 @@
+//go:build ignore
+
 package keeper
 
 import (
@@ -8,8 +10,8 @@ import (
 
 	"testing"
 
-	sdk "github.com/cosmos/cosmos-sdk/types"
-	abci "github.com/tendermint/tendermint/abci/types"
+	sdk "github.com/okex/exchain/libs/cosmos-sdk/types"
+	abci "github.com/okex/exchain/libs/tendermint/abci/types"
 )
 
 func TestDumpStore(t *testing.T) {

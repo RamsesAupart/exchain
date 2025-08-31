@@ -1,7 +1,7 @@
 package types
 
 import (
-	sdk "github.com/cosmos/cosmos-sdk/types"
+	sdk "github.com/okex/exchain/libs/cosmos-sdk/types"
 )
 
 // DelegatorWithdrawInfo is the address for where distributions rewards are withdrawn to by default
@@ -27,7 +27,7 @@ type GenesisState struct {
 }
 
 // NewGenesisState creates a new object of GenesisState
-func NewGenesisState( params Params, feePool FeePool,
+func NewGenesisState(params Params, feePool FeePool,
 	dwis []DelegatorWithdrawInfo, pp sdk.ConsAddress, acc []ValidatorAccumulatedCommissionRecord) GenesisState {
 
 	return GenesisState{

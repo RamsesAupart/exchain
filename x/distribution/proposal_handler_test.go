@@ -5,9 +5,9 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	sdk "github.com/cosmos/cosmos-sdk/types"
+	sdk "github.com/okex/exchain/libs/cosmos-sdk/types"
+	"github.com/okex/exchain/libs/tendermint/crypto/ed25519"
 	govtypes "github.com/okex/exchain/x/gov/types"
-	"github.com/tendermint/tendermint/crypto/ed25519"
 
 	"github.com/okex/exchain/x/distribution/keeper"
 	"github.com/okex/exchain/x/distribution/types"
@@ -49,7 +49,7 @@ func TestProposalHandlerPassed(t *testing.T) {
 	k.SetFeePool(ctx, feePool)
 
 	tp := testProposal(recipient, amount)
-	hdlr := NewCommunityPoolSpendProposalHandler(k)
+	hdlr := NewDistributionProposalHandler(k)
 	require.NoError(t, hdlr(ctx, &tp))
 	require.Equal(t, accountKeeper.GetAccount(ctx, recipient).GetCoins(), amount)
 }
@@ -63,7 +63,7 @@ func TestProposalHandlerFailed(t *testing.T) {
 	accountKeeper.SetAccount(ctx, account)
 
 	tp := testProposal(recipient, amount)
-	hdlr := NewCommunityPoolSpendProposalHandler(k)
+	hdlr := NewDistributionProposalHandler(k)
 	require.Error(t, hdlr(ctx, &tp))
 	require.True(t, accountKeeper.GetAccount(ctx, recipient).GetCoins().IsZero())
 }

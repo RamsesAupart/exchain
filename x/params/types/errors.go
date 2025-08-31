@@ -1,17 +1,17 @@
 package types
 
 import (
-	sdk "github.com/cosmos/cosmos-sdk/types"
-	sdkerrors "github.com/cosmos/cosmos-sdk/types/errors"
-	"github.com/cosmos/cosmos-sdk/x/params"
+	sdk "github.com/okex/exchain/libs/cosmos-sdk/types"
+	sdkerrors "github.com/okex/exchain/libs/cosmos-sdk/types/errors"
+	"github.com/okex/exchain/libs/cosmos-sdk/x/params"
 )
 
 // Param module codespace constants
 const (
 	DefaultCodespace string = "params"
-	BaseParamsError = 4001
+	BaseParamsError         = 4001
 
-	CodeInvalidMaxProposalNum uint32 = BaseParamsError+4
+	CodeInvalidMaxProposalNum uint32 = BaseParamsError + 4
 )
 
 // ErrInvalidMaxProposalNum returns error when the number of params to change are out of limit

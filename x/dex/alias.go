@@ -5,7 +5,7 @@
 package dex
 
 import (
-	"github.com/cosmos/cosmos-sdk/x/auth"
+	"github.com/okex/exchain/libs/cosmos-sdk/x/auth"
 	"github.com/okex/exchain/x/common/version"
 	"github.com/okex/exchain/x/dex/keeper"
 	"github.com/okex/exchain/x/dex/types"
@@ -68,5 +68,5 @@ var (
 	NewMsgDeposit  = types.NewMsgDeposit
 	NewMsgWithdraw = types.NewMsgWithdraw
 
-	ErrTokenPairNotFound   = types.ErrTokenPairNotFound
+	ErrTokenPairNotFound = types.ErrTokenPairNotFound
 )

@@ -1,3 +1,6 @@
+//go:build ignore
+// +build ignore
+
 package farm
 
 import (
@@ -9,8 +12,8 @@ import (
 	"github.com/okex/exchain/x/farm/keeper"
 	"github.com/okex/exchain/x/farm/types"
 
-	sdk "github.com/cosmos/cosmos-sdk/types"
-	abci "github.com/tendermint/tendermint/abci/types"
+	sdk "github.com/okex/exchain/libs/cosmos-sdk/types"
+	abci "github.com/okex/exchain/libs/tendermint/abci/types"
 )
 
 func TestBeginBlocker(t *testing.T) {

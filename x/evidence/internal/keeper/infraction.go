@@ -3,7 +3,7 @@ package keeper
 import (
 	"fmt"
 
-	sdk "github.com/cosmos/cosmos-sdk/types"
+	sdk "github.com/okex/exchain/libs/cosmos-sdk/types"
 
 	"github.com/okex/exchain/x/evidence/internal/types"
 )
@@ -92,12 +92,12 @@ func (k Keeper) HandleDoubleSign(ctx sdk.Context, evidence types.Equivocation) {
 	// ABCI, and now received as evidence. The fraction is passed in to separately
 	// to slash unbonding and rebonding delegations.
 	/*
-	k.slashingKeeper.Slash(
-		ctx,
-		consAddr,
-		k.slashingKeeper.SlashFractionDoubleSign(ctx),
-		evidence.GetValidatorPower(), distributionHeight,
-	)
+		k.slashingKeeper.Slash(
+			ctx,
+			consAddr,
+			k.slashingKeeper.SlashFractionDoubleSign(ctx),
+			evidence.GetValidatorPower(), distributionHeight,
+		)
 	*/
 	k.stakingKeeper.AppendAbandonedValidatorAddrs(ctx, consAddr)
 	// Jail the validator if not already jailed. This will begin unbonding the

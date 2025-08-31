@@ -6,13 +6,13 @@ import (
 	"github.com/okex/exchain/x/common"
 	"github.com/okex/exchain/x/common/perf"
 
-	sdk "github.com/cosmos/cosmos-sdk/types"
+	sdk "github.com/okex/exchain/libs/cosmos-sdk/types"
 )
 
 // NewHandler creates an sdk.Handler for all the ammswap type messages
 func NewHandler(k Keeper) sdk.Handler {
 	return func(ctx sdk.Context, msg sdk.Msg) (*sdk.Result, error) {
-		ctx = ctx.WithEventManager(sdk.NewEventManager())
+		ctx.SetEventManager(sdk.NewEventManager())
 		var handlerFun func() (*sdk.Result, error)
 		var name string
 		switch msg := msg.(type) {

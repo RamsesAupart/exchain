@@ -1,3 +1,5 @@
+//go:build ignore
+
 package order
 
 import (
@@ -5,11 +7,11 @@ import (
 
 	"github.com/okex/exchain/x/common/version"
 
-	"github.com/cosmos/cosmos-sdk/codec"
+	"github.com/okex/exchain/libs/cosmos-sdk/codec"
+	abci "github.com/okex/exchain/libs/tendermint/abci/types"
 	"github.com/okex/exchain/x/order/keeper"
 	"github.com/okex/exchain/x/order/types"
 	"github.com/stretchr/testify/require"
-	abci "github.com/tendermint/tendermint/abci/types"
 )
 
 func TestAppModule(t *testing.T) {

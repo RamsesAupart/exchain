@@ -2,16 +2,16 @@ package types
 
 import (
 	"encoding/binary"
-	"github.com/cosmos/cosmos-sdk/server"
-	sdk "github.com/cosmos/cosmos-sdk/types"
-	"github.com/ethereum/go-ethereum/common"
-	ethtypes "github.com/ethereum/go-ethereum/core/types"
-	"github.com/spf13/viper"
-	tmtypes "github.com/tendermint/tendermint/types"
-	dbm "github.com/tendermint/tm-db"
 	"path/filepath"
 	"sync"
 	"sync/atomic"
+
+	"github.com/ethereum/go-ethereum/common"
+	ethtypes "github.com/ethereum/go-ethereum/core/types"
+	sdk "github.com/okex/exchain/libs/cosmos-sdk/types"
+	tmtypes "github.com/okex/exchain/libs/tendermint/types"
+	dbm "github.com/okex/exchain/libs/tm-db"
+	"github.com/spf13/viper"
 )
 
 var (
@@ -25,12 +25,10 @@ type Keeper interface {
 	GetHeightHash(ctx sdk.Context, height uint64) common.Hash
 }
 
-func init() {
-	server.TrapSignal(func() {
-		if indexer != nil && indexer.backend.db != nil {
-			indexer.backend.db.Close()
-		}
-	})
+func CloseIndexer() {
+	if indexer != nil && indexer.backend.db != nil {
+		indexer.backend.db.Close()
+	}
 }
 
 func GetEnableBloomFilter() bool {
@@ -75,7 +73,7 @@ func InitIndexer(db dbm.DB) {
 func BloomDb() dbm.DB {
 	dataDir := filepath.Join(viper.GetString("home"), "data")
 	var err error
-	db, err := sdk.NewLevelDB(bloomDir, dataDir)
+	db, err := sdk.NewDB(bloomDir, dataDir)
 	if err != nil {
 		panic(err)
 	}
@@ -97,7 +95,7 @@ func (i *Indexer) IsProcessing() bool {
 	return atomic.LoadUint32(&i.processing) == 1
 }
 
-func (i *Indexer) ProcessSection(ctx sdk.Context, k Keeper, interval uint64) {
+func (i *Indexer) ProcessSection(ctx sdk.Context, k Keeper, interval uint64, bloomData *[]*KV) {
 	if atomic.SwapUint32(&i.processing, 1) == 1 {
 		ctx.Logger().Error("matcher is already running")
 		return
@@ -151,12 +149,16 @@ func (i *Indexer) ProcessSection(ctx sdk.Context, k Keeper, interval uint64) {
 			}
 			lastHead = hash
 		}
-		if err := i.backend.Commit(); err != nil {
+
+		bd, err := i.backend.Commit()
+		if err != nil {
 			ctx.Logger().Error(err.Error())
 			return
 		}
 		i.setSectionHead(section, lastHead)
 		i.setValidSections(section + 1)
+		i.setBloomData(&bd, section, lastHead)
+		*bloomData = bd
 	}
 }
 
@@ -181,6 +183,14 @@ func (i *Indexer) setValidSections(sections uint64) {
 		i.removeSectionHead(i.storedSections)
 	}
 	i.storedSections = sections // needed if new > old
+}
+
+// setBloomData put SectionHead and ValidSections into watcher.bloomData
+func (i *Indexer) setBloomData(bloomData *[]*KV, section uint64, hash common.Hash) {
+	var data [8]byte
+	binary.BigEndian.PutUint64(data[:], section)
+	*bloomData = append(*bloomData, &KV{Key: append([]byte("shead"), data[:]...), Value: hash.Bytes()})
+	*bloomData = append(*bloomData, &KV{Key: []byte("count"), Value: data[:]})
 }
 
 // GetValidSections reads the number of valid sections from the index database

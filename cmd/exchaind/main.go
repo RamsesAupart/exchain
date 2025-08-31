@@ -2,26 +2,33 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 
+	"github.com/okex/exchain/app/logevents"
+	"github.com/okex/exchain/cmd/exchaind/fss"
+	"github.com/okex/exchain/cmd/exchaind/mpt"
+
+	"github.com/okex/exchain/app/rpc"
+	evmtypes "github.com/okex/exchain/x/evm/types"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 
-	abci "github.com/tendermint/tendermint/abci/types"
-	tmamino "github.com/tendermint/tendermint/crypto/encoding/amino"
-	"github.com/tendermint/tendermint/crypto/multisig"
-	"github.com/tendermint/tendermint/libs/cli"
-	"github.com/tendermint/tendermint/libs/log"
-	tmtypes "github.com/tendermint/tendermint/types"
-	dbm "github.com/tendermint/tm-db"
+	abci "github.com/okex/exchain/libs/tendermint/abci/types"
+	tmamino "github.com/okex/exchain/libs/tendermint/crypto/encoding/amino"
+	"github.com/okex/exchain/libs/tendermint/crypto/multisig"
+	"github.com/okex/exchain/libs/tendermint/libs/cli"
+	"github.com/okex/exchain/libs/tendermint/libs/log"
+	tmtypes "github.com/okex/exchain/libs/tendermint/types"
+	dbm "github.com/okex/exchain/libs/tm-db"
 
-	"github.com/cosmos/cosmos-sdk/baseapp"
-	"github.com/cosmos/cosmos-sdk/client/flags"
-	clientkeys "github.com/cosmos/cosmos-sdk/client/keys"
-	"github.com/cosmos/cosmos-sdk/crypto/keys"
-	"github.com/cosmos/cosmos-sdk/server"
-	sdk "github.com/cosmos/cosmos-sdk/types"
-	"github.com/cosmos/cosmos-sdk/x/auth"
+	"github.com/okex/exchain/libs/cosmos-sdk/baseapp"
+	"github.com/okex/exchain/libs/cosmos-sdk/client/flags"
+	clientkeys "github.com/okex/exchain/libs/cosmos-sdk/client/keys"
+	"github.com/okex/exchain/libs/cosmos-sdk/crypto/keys"
+	"github.com/okex/exchain/libs/cosmos-sdk/server"
+	sdk "github.com/okex/exchain/libs/cosmos-sdk/types"
+	"github.com/okex/exchain/libs/cosmos-sdk/x/auth"
 
 	"github.com/okex/exchain/app"
 	"github.com/okex/exchain/app/codec"
@@ -41,16 +48,16 @@ var invCheckPeriod uint
 func main() {
 	cobra.EnableCommandSorting = false
 
-	cdc := codec.MakeCodec(app.ModuleBasics)
+	codecProxy, registry := codec.MakeCodecSuit(app.ModuleBasics)
 
 	tmamino.RegisterKeyType(ethsecp256k1.PubKey{}, ethsecp256k1.PubKeyName)
 	tmamino.RegisterKeyType(ethsecp256k1.PrivKey{}, ethsecp256k1.PrivKeyName)
 	multisig.RegisterKeyType(ethsecp256k1.PubKey{}, ethsecp256k1.PubKeyName)
 
-	keys.CryptoCdc = cdc
-	genutil.ModuleCdc = cdc
-	genutiltypes.ModuleCdc = cdc
-	clientkeys.KeysCdc = cdc
+	keys.CryptoCdc = codecProxy.GetCdc()
+	genutil.ModuleCdc = codecProxy.GetCdc()
+	genutiltypes.ModuleCdc = codecProxy.GetCdc()
+	clientkeys.KeysCdc = codecProxy.GetCdc()
 
 	config := sdk.GetConfig()
 	okexchain.SetBech32Prefixes(config)
@@ -67,36 +74,56 @@ func main() {
 	// CLI commands to initialize the chain
 	rootCmd.AddCommand(
 		client.ValidateChainID(
-			genutilcli.InitCmd(ctx, cdc, app.ModuleBasics, app.DefaultNodeHome),
+			genutilcli.InitCmd(ctx, codecProxy.GetCdc(), app.ModuleBasics, app.DefaultNodeHome),
 		),
-		genutilcli.CollectGenTxsCmd(ctx, cdc, auth.GenesisAccountIterator{}, app.DefaultNodeHome),
-		genutilcli.MigrateGenesisCmd(ctx, cdc),
+		genutilcli.CollectGenTxsCmd(ctx, codecProxy.GetCdc(), auth.GenesisAccountIterator{}, app.DefaultNodeHome),
+		genutilcli.MigrateGenesisCmd(ctx, codecProxy.GetCdc()),
 		genutilcli.GenTxCmd(
-			ctx, cdc, app.ModuleBasics, staking.AppModuleBasic{}, auth.GenesisAccountIterator{},
+			ctx, codecProxy.GetCdc(), app.ModuleBasics, staking.AppModuleBasic{}, auth.GenesisAccountIterator{},
 			app.DefaultNodeHome, app.DefaultCLIHome,
 		),
-		genutilcli.ValidateGenesisCmd(ctx, cdc, app.ModuleBasics),
-		client.TestnetCmd(ctx, cdc, app.ModuleBasics, auth.GenesisAccountIterator{}),
-		replayCmd(ctx),
+		genutilcli.ValidateGenesisCmd(ctx, codecProxy.GetCdc(), app.ModuleBasics),
+		client.TestnetCmd(ctx, codecProxy.GetCdc(), app.ModuleBasics, auth.GenesisAccountIterator{}),
+		replayCmd(ctx, client.RegisterAppFlag, codecProxy, newApp, registry, registerRoutes),
+		repairStateCmd(ctx),
+		displayStateCmd(ctx),
+		mpt.MptCmd(ctx),
+		fss.Command(ctx),
 		// AddGenesisAccountCmd allows users to add accounts to the genesis file
-		AddGenesisAccountCmd(ctx, cdc, app.DefaultNodeHome, app.DefaultCLIHome),
+		AddGenesisAccountCmd(ctx, codecProxy.GetCdc(), app.DefaultNodeHome, app.DefaultCLIHome),
 		flags.NewCompletionCmd(rootCmd, true),
-		pruningCmd(ctx),
-		compactCmd(ctx),
+		dataCmd(ctx),
 		exportAppCmd(ctx),
+		iaviewerCmd(ctx, codecProxy.GetCdc()),
+		subscribeCmd(codecProxy.GetCdc()),
 	)
 
+	subFunc := func(logger log.Logger) log.Subscriber {
+		return logevents.NewProvider(logger)
+	}
 	// Tendermint node base commands
-	server.AddCommands(ctx, cdc, rootCmd, newApp, exportAppStateAndTMValidators, registerRoutes, client.RegisterAppFlag)
+	server.AddCommands(ctx, codecProxy, registry, rootCmd, newApp, closeApp, exportAppStateAndTMValidators,
+		registerRoutes, client.RegisterAppFlag, app.PreRun, subFunc)
 
 	// prepare and add flags
 	executor := cli.PrepareBaseCmd(rootCmd, "OKEXCHAIN", app.DefaultNodeHome)
 	rootCmd.PersistentFlags().UintVar(&invCheckPeriod, flagInvCheckPeriod,
 		0, "Assert registered invariants every N blocks")
+	rootCmd.PersistentFlags().Bool(server.FlagGops, false, "Enable gops metrics collection")
+
 	err := executor.Execute()
 	if err != nil {
 		panic(err)
 	}
+}
+
+func closeApp(iApp abci.Application) {
+	fmt.Println("Close App")
+	app := iApp.(*app.OKExChainApp)
+	app.StopBaseApp()
+	evmtypes.CloseIndexer()
+	rpc.CloseEthBackend()
+	app.EvmKeeper.Watcher.Stop()
 }
 
 func newApp(logger log.Logger, db dbm.DB, traceStore io.Writer) abci.Application {
@@ -127,9 +154,9 @@ func exportAppStateAndTMValidators(
 
 		if err := ethermintApp.LoadHeight(height); err != nil {
 			return nil, nil, err
-		} else {
-			ethermintApp = app.NewOKExChainApp(logger, db, traceStore, true, map[int64]bool{}, 0)
 		}
+	} else {
+		ethermintApp = app.NewOKExChainApp(logger, db, traceStore, true, map[int64]bool{}, 0)
 	}
 
 	return ethermintApp.ExportAppStateAndValidators(forZeroHeight, jailWhiteList)

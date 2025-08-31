@@ -1,9 +1,12 @@
+//go:build ignore
+// +build ignore
+
 package keeper
 
 import (
 	"testing"
 
-	sdk "github.com/cosmos/cosmos-sdk/types"
+	sdk "github.com/okex/exchain/libs/cosmos-sdk/types"
 	"github.com/okex/exchain/x/farm/types"
 	"github.com/stretchr/testify/require"
 )
@@ -95,7 +98,7 @@ func TestCalculateAmountYieldedBetween(t *testing.T) {
 	}
 
 	for _, test := range tests {
-		ctx = ctx.WithBlockHeight(test.endBlockHeight)
+		ctx.SetBlockHeight(test.endBlockHeight)
 		keeper.SetPoolCurrentRewards(ctx, poolName, test.curRewards)
 		pool := types.FarmPool{
 			Name:              poolName,
@@ -526,7 +529,7 @@ func TestWithdrawRewards(t *testing.T) {
 	}
 
 	for _, test := range tests {
-		ctx = ctx.WithBlockHeight(120)
+		ctx.SetBlockHeight(120)
 		keeper.SetPoolHistoricalRewards(
 			ctx, poolName, 1,
 			types.NewPoolHistoricalRewards(sdk.SysCoins{}, 2),

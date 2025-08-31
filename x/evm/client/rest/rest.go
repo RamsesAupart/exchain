@@ -5,24 +5,30 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
-	"github.com/cosmos/cosmos-sdk/client/context"
-	"github.com/cosmos/cosmos-sdk/codec"
-	sdk "github.com/cosmos/cosmos-sdk/types"
-	sdkerrors "github.com/cosmos/cosmos-sdk/types/errors"
-	"github.com/cosmos/cosmos-sdk/types/rest"
-	authrest "github.com/cosmos/cosmos-sdk/x/auth/client/rest"
-	"github.com/cosmos/cosmos-sdk/x/auth/types"
+	authrest "github.com/okex/exchain/libs/cosmos-sdk/x/auth/client/rest"
+
+	"github.com/okex/exchain/x/evm/client/utils"
+	"github.com/okex/exchain/x/evm/watcher"
+
 	ethcommon "github.com/ethereum/go-ethereum/common"
 	"github.com/gorilla/mux"
-	rpctypes "github.com/okex/exchain/app/rpc/types"
+	"github.com/okex/exchain/libs/cosmos-sdk/client/context"
+	"github.com/okex/exchain/libs/cosmos-sdk/client/rpc"
+	"github.com/okex/exchain/libs/cosmos-sdk/codec"
+	sdk "github.com/okex/exchain/libs/cosmos-sdk/types"
+	sdkerrors "github.com/okex/exchain/libs/cosmos-sdk/types/errors"
+	"github.com/okex/exchain/libs/cosmos-sdk/types/rest"
+	"github.com/okex/exchain/libs/cosmos-sdk/x/auth/types"
+	tmliteProxy "github.com/okex/exchain/libs/tendermint/lite/proxy"
+	"github.com/okex/exchain/libs/tendermint/rpc/client"
+	ctypes "github.com/okex/exchain/libs/tendermint/rpc/core/types"
 	"github.com/okex/exchain/x/common"
 	evmtypes "github.com/okex/exchain/x/evm/types"
 	govRest "github.com/okex/exchain/x/gov/client/rest"
-	"github.com/tendermint/tendermint/rpc/client"
-	ctypes "github.com/tendermint/tendermint/rpc/core/types"
 )
 
 // RegisterRoutes - Central function to define routes that get registered by the main application
@@ -33,6 +39,12 @@ func RegisterRoutes(cliCtx context.CLIContext, r *mux.Router) {
 	r.HandleFunc("/txs/encode", authrest.EncodeTxRequestHandlerFn(cliCtx)).Methods("POST") // default from auth
 	r.HandleFunc("/txs/decode", authrest.DecodeTxRequestHandlerFn(cliCtx)).Methods("POST")
 	r.HandleFunc("/section", QuerySectionFn(cliCtx)).Methods("GET")
+	r.HandleFunc("/contract/blocked_list", QueryContractBlockedListHandlerFn(cliCtx)).Methods("GET")
+	r.HandleFunc("/contract/method_blocked_list", QueryContractMethodBlockedListHandlerFn(cliCtx)).Methods("GET")
+	r.HandleFunc("/block_tx_hashes/{blockHeight}", blockTxHashesHandler(cliCtx)).Methods("GET")
+	r.HandleFunc("/latestheight", latestHeightHandler(cliCtx)).Methods("GET")
+
+	registerQueryRoutes(cliCtx, r)
 }
 
 func QueryTxRequestHandlerFn(cliCtx context.CLIContext) http.HandlerFunc {
@@ -85,31 +97,36 @@ func QueryTx(cliCtx context.CLIContext, hashHexStr string) (interface{}, error) 
 		}
 	}
 
-	tx, err := evmtypes.TxDecoder(cliCtx.Codec)(resTx.Tx)
+	tx, err := evmtypes.TxDecoder(cliCtx.CodecProy)(resTx.Tx, evmtypes.IGNORE_HEIGHT_CHECKING)
 	if err != nil {
 		return nil, sdkerrors.Wrap(sdkerrors.ErrJSONUnmarshal, err.Error())
 	}
-
-	ethTx, ok := tx.(evmtypes.MsgEthereumTx)
-	if ok {
-		return getEthTxResponse(node, resTx, ethTx)
+	if realTx, ok := tx.(*evmtypes.MsgEthereumTx); ok {
+		return getEthTxResponse(node, resTx, realTx)
 	}
+
 	// not eth Tx
 	resBlocks, err := getBlocksForTxResults(cliCtx, []*ctypes.ResultTx{resTx})
 	if err != nil {
 		return sdk.TxResponse{}, err
 	}
-
-	out, err := formatTxResult(cliCtx.Codec, resTx, resBlocks[resTx.Height])
-	if err != nil {
-		return out, err
+	var ret interface{}
+	switch tx.(type) {
+	case *types.IbcTx:
+		jsonTx, err := types.FromProtobufTx(cliCtx.CodecProy, tx.(*types.IbcTx))
+		if nil != err {
+			return nil, err
+		}
+		return sdk.NewResponseResultTx(resTx, jsonTx, resBlocks[resTx.Height].Block.Time.Format(time.RFC3339)), nil
+	default:
+		ret, err = formatTxResult(cliCtx.Codec, resTx, resBlocks[resTx.Height])
 	}
 
-	return out, nil
+	return ret, err
 
 }
 
-func getEthTxResponse(node client.Client, resTx *ctypes.ResultTx, ethTx evmtypes.MsgEthereumTx) (interface{}, error) {
+func getEthTxResponse(node client.Client, resTx *ctypes.ResultTx, ethTx *evmtypes.MsgEthereumTx) (interface{}, error) {
 	// Can either cache or just leave this out if not necessary
 	block, err := node.Block(&resTx.Height)
 	if err != nil {
@@ -117,7 +134,7 @@ func getEthTxResponse(node client.Client, resTx *ctypes.ResultTx, ethTx evmtypes
 	}
 	blockHash := ethcommon.BytesToHash(block.Block.Hash())
 	height := uint64(resTx.Height)
-	res, err := rpctypes.NewTransaction(&ethTx, ethcommon.BytesToHash(resTx.Tx.Hash()), blockHash, height, uint64(resTx.Index))
+	res, err := watcher.NewTransaction(ethTx, ethcommon.BytesToHash(resTx.Tx.Hash(resTx.Height)), blockHash, height, uint64(resTx.Index))
 	if err != nil {
 		return nil, err
 	}
@@ -131,7 +148,7 @@ func ValidateTxResult(cliCtx context.CLIContext, resTx *ctypes.ResultTx) error {
 		if err != nil {
 			return err
 		}
-		err = resTx.Proof.Validate(check.Header.DataHash)
+		err = resTx.Proof.Validate(check.Header.DataHash, resTx.Height)
 		if err != nil {
 			return err
 		}
@@ -178,7 +195,7 @@ func parseTx(cdc *codec.Codec, txBytes []byte) (sdk.Tx, error) {
 		return nil, err
 	}
 
-	return tx, nil
+	return &tx, nil
 }
 
 // ManageContractDeploymentWhitelistProposalRESTHandler defines evm proposal handler
@@ -188,6 +205,11 @@ func ManageContractDeploymentWhitelistProposalRESTHandler(context.CLIContext) go
 
 // ManageContractBlockedListProposalRESTHandler defines evm proposal handler
 func ManageContractBlockedListProposalRESTHandler(context.CLIContext) govRest.ProposalRESTHandler {
+	return govRest.ProposalRESTHandler{}
+}
+
+// ManageContractMethodBlockedListProposalRESTHandler defines evm proposal handler
+func ManageContractMethodBlockedListProposalRESTHandler(context.CLIContext) govRest.ProposalRESTHandler {
 	return govRest.ProposalRESTHandler{}
 }
 
@@ -202,4 +224,132 @@ func QuerySectionFn(cliCtx context.CLIContext) http.HandlerFunc {
 
 		rest.PostProcessResponseBare(w, cliCtx, res)
 	}
+}
+
+// QueryContractBlockedListHandlerFn defines evm contract blocked list handler
+func QueryContractBlockedListHandlerFn(cliCtx context.CLIContext) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		path := fmt.Sprintf("custom/%s/%s", evmtypes.ModuleName, evmtypes.QueryContractBlockedList)
+
+		cliCtx, ok := rest.ParseQueryHeightOrReturnBadRequest(w, cliCtx, r)
+		if !ok {
+			return
+		}
+		bz, _, err := cliCtx.QueryWithData(path, nil)
+		if err != nil {
+			common.HandleErrorResponseV2(w, http.StatusInternalServerError, common.ErrorABCIQueryFails)
+			return
+		}
+
+		var blockedList evmtypes.AddressList
+		cliCtx.Codec.MustUnmarshalJSON(bz, &blockedList)
+
+		var ethAddrs []string
+		for _, accAddr := range blockedList {
+			ethAddrs = append(ethAddrs, ethcommon.BytesToAddress(accAddr.Bytes()).Hex())
+		}
+
+		rest.PostProcessResponseBare(w, cliCtx, ethAddrs)
+	}
+}
+
+// QueryContractMethodBlockedListHandlerFn defines evm contract method blocked list handler
+func QueryContractMethodBlockedListHandlerFn(cliCtx context.CLIContext) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		path := fmt.Sprintf("custom/%s/%s", evmtypes.ModuleName, evmtypes.QueryContractMethodBlockedList)
+
+		cliCtx, ok := rest.ParseQueryHeightOrReturnBadRequest(w, cliCtx, r)
+		if !ok {
+			return
+		}
+		bz, _, err := cliCtx.QueryWithData(path, nil)
+		if err != nil {
+			common.HandleErrorResponseV2(w, http.StatusInternalServerError, common.ErrorABCIQueryFails)
+			return
+		}
+
+		var blockedList evmtypes.BlockedContractList
+		cliCtx.Codec.MustUnmarshalJSON(bz, &blockedList)
+
+		results := make([]utils.ResponseBlockContract, 0)
+		for i, _ := range blockedList {
+			ethAddr := ethcommon.BytesToAddress(blockedList[i].Address.Bytes()).Hex()
+			result := utils.ResponseBlockContract{Address: ethAddr, BlockMethods: blockedList[i].BlockMethods}
+			results = append(results, result)
+		}
+
+		rest.PostProcessResponseBare(w, cliCtx, results)
+	}
+}
+func blockTxHashesHandler(cliCtx context.CLIContext) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		vars := mux.Vars(r)
+		blockHeightStr := vars["blockHeight"]
+		blockHeight, err := strconv.ParseInt(blockHeightStr, 10, 64)
+		if err != nil {
+			common.HandleErrorMsg(w, cliCtx, common.CodeStrconvFailed, err.Error())
+			return
+		}
+		res, err := GetBlockTxHashes(cliCtx, blockHeight)
+		if err != nil {
+			common.HandleErrorMsg(w, cliCtx, evmtypes.CodeGetBlockTxHashesFailed,
+				fmt.Sprintf("failed to get block tx hash: %s", err.Error()))
+			return
+		}
+
+		rest.PostProcessResponse(w, cliCtx, res)
+	}
+}
+func latestHeightHandler(cliCtx context.CLIContext) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		h, err := rpc.GetChainHeight(cliCtx)
+		if err != nil {
+			common.HandleErrorMsg(w, cliCtx, evmtypes.CodeGetChainHeightFailed,
+				fmt.Sprintf("failed to get chain height: %s", err.Error()))
+			return
+		}
+		res := common.GetBaseResponse(h)
+		bz, err := json.Marshal(res)
+		if err != nil {
+			common.HandleErrorMsg(w, cliCtx, common.CodeMarshalJSONFailed, err.Error())
+		}
+		rest.PostProcessResponse(w, cliCtx, bz)
+	}
+}
+
+// GetBlockTxHashes return tx hashes in the block of the given height
+func GetBlockTxHashes(cliCtx context.CLIContext, height int64) ([]string, error) {
+	// get the node
+	node, err := cliCtx.GetNode()
+	if err != nil {
+		return nil, err
+	}
+
+	// header -> BlockchainInfo
+	// header, tx -> Block
+	// results -> BlockResults
+	res, err := node.Block(&height)
+	if err != nil {
+		return nil, err
+	}
+
+	if !cliCtx.TrustNode {
+		check, err := cliCtx.Verify(res.Block.Height)
+		if err != nil {
+			return nil, err
+		}
+
+		err = tmliteProxy.ValidateBlock(res.Block, check)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	txs := res.Block.Txs
+	txLen := len(txs)
+	txHashes := make([]string, txLen)
+	for i, txBytes := range txs {
+		txHashes[i] = fmt.Sprintf("%X", txBytes.Hash(height))
+	}
+	return txHashes, nil
 }

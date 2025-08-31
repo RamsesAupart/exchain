@@ -1,7 +1,7 @@
 package keeper
 
 import (
-	sdk "github.com/cosmos/cosmos-sdk/types"
+	sdk "github.com/okex/exchain/libs/cosmos-sdk/types"
 
 	"github.com/okex/exchain/x/distribution/types"
 	"github.com/okex/exchain/x/staking/exported"
@@ -9,6 +9,11 @@ import (
 
 // initialize rewards for a new validator
 func (k Keeper) initializeValidator(ctx sdk.Context, val exported.ValidatorI) {
+	if k.CheckDistributionProposalValid(ctx) {
+		k.initializeValidatorDistrProposal(ctx, val)
+		return
+	}
+
 	// set accumulated commissions
 	k.SetValidatorAccumulatedCommission(ctx, val.GetOperator(), types.InitialValidatorAccumulatedCommission())
 }

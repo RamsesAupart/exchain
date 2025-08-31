@@ -1,0 +1,33 @@
+// protoc --gogofaster_out=. --go-grpc_out=.   ./libs/tendermint/proto/mempool/broadcast.proto
+
+syntax = "proto3";
+
+option go_package = "libs/tendermint/proto/mempool";
+
+package mempool;
+
+service MempoolTxReceiver {
+  rpc CheckTx (TxRequest) returns(Empty) {}
+  rpc CheckTxAsync (TxRequest) returns(Empty) {}
+  rpc CheckTxStream (stream TxRequest) returns(Empty) {}
+  rpc CheckTxStreamAsync (stream TxRequest) returns(Empty) {}
+}
+
+message TxRequest {
+  bytes tx = 1;
+  string from = 2;
+  uint32 peer_id = 3;
+}
+
+message TxsRequest {
+  repeated bytes txs = 1;
+  repeated string from_addrs = 2;
+  uint32 peer_id = 3;
+}
+
+message ReceiverInfo {
+  uint32 your_id = 1;
+  int64 port = 2;
+}
+
+message Empty {}

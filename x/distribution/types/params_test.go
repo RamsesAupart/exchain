@@ -3,14 +3,17 @@ package types
 import (
 	"testing"
 
-	sdk "github.com/cosmos/cosmos-sdk/types"
+	sdk "github.com/okex/exchain/libs/cosmos-sdk/types"
 	"github.com/stretchr/testify/require"
 )
 
 const (
 	strExpected = `Distribution Params:
   Community Tax:          0.020000000000000000
-  Withdraw Addr Enabled:  true`
+  Withdraw Addr Enabled:  true
+  Distribution Type: 0
+  Withdraw Reward Enabled: true
+  Reward Truncate Precision: 0`
 )
 
 func TestParams(t *testing.T) {

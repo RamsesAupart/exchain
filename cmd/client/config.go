@@ -8,9 +8,9 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 
-	"github.com/tendermint/tendermint/libs/cli"
+	"github.com/okex/exchain/libs/tendermint/libs/cli"
 
-	"github.com/cosmos/cosmos-sdk/client/flags"
+	"github.com/okex/exchain/libs/cosmos-sdk/client/flags"
 
 	ethermint "github.com/okex/exchain/app/types"
 )
@@ -54,7 +54,9 @@ func ValidateChainID(baseCmd *cobra.Command) *cobra.Command {
 		if !ethermint.IsValidChainID(chainID) {
 			return fmt.Errorf("invalid chain-id format: %s", chainID)
 		}
-
+		if err := ethermint.IsValidateChainIdWithGenesisHeight(chainID); err != nil {
+			return err
+		}
 		return baseRunE(cmd, args)
 	}
 

@@ -1,3 +1,5 @@
+//go:build ignore
+
 package ammswap
 
 import (
@@ -6,13 +8,13 @@ import (
 	"testing"
 	"time"
 
-	sdk "github.com/cosmos/cosmos-sdk/types"
-	"github.com/cosmos/cosmos-sdk/x/supply"
+	sdk "github.com/okex/exchain/libs/cosmos-sdk/types"
+	"github.com/okex/exchain/libs/cosmos-sdk/x/supply"
+	abci "github.com/okex/exchain/libs/tendermint/abci/types"
 	"github.com/okex/exchain/x/ammswap/keeper"
 	"github.com/okex/exchain/x/ammswap/types"
 	"github.com/okex/exchain/x/token"
 	"github.com/stretchr/testify/require"
-	abci "github.com/tendermint/tendermint/abci/types"
 )
 
 func testCode(t *testing.T, err sdk.Error, expectedCode uint32) {

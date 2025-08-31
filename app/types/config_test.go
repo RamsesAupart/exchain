@@ -5,8 +5,8 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/cosmos/cosmos-sdk/crypto/keys/hd"
-	sdk "github.com/cosmos/cosmos-sdk/types"
+	"github.com/okex/exchain/libs/cosmos-sdk/crypto/keys/hd"
+	sdk "github.com/okex/exchain/libs/cosmos-sdk/types"
 )
 
 func resetConfig(config *sdk.Config) {
@@ -59,7 +59,7 @@ func TestSetCoinType(t *testing.T) {
 func TestHDPath(t *testing.T) {
 	params := *hd.NewFundraiserParams(0, Bip44CoinType, 0)
 	// need to prepend "m/" because the below method provided by the sdk does not add the proper prepending
-	hdPath :=  params.String()
+	hdPath := params.String()
 	require.Equal(t, "m/44'/996'/0'/0/0", hdPath)
 	require.Equal(t, "m/44'/60'/0'/0/0", BIP44HDPath)
 }

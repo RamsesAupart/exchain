@@ -3,8 +3,8 @@ package genutil
 import (
 	"github.com/okex/exchain/x/genutil/types"
 
-	sdkgenutil "github.com/cosmos/cosmos-sdk/x/genutil"
-	sdkgenutiltypes "github.com/cosmos/cosmos-sdk/x/genutil/types"
+	sdkgenutil "github.com/okex/exchain/libs/cosmos-sdk/x/genutil"
+	sdkgenutiltypes "github.com/okex/exchain/libs/cosmos-sdk/x/genutil/types"
 )
 
 // const
@@ -23,15 +23,16 @@ type (
 
 var (
 	// nolint
-	ModuleCdc                    = types.ModuleCdc
-	GenesisStateFromGenFile      = sdkgenutil.GenesisStateFromGenFile
-	NewGenesisState              = sdkgenutil.NewGenesisState
-	SetGenesisStateInAppState    = sdkgenutil.SetGenesisStateInAppState
-	InitializeNodeValidatorFiles = sdkgenutil.InitializeNodeValidatorFiles
-	ExportGenesisFileWithTime    = sdkgenutil.ExportGenesisFileWithTime
-	NewInitConfig                = sdkgenutil.NewInitConfig
-	ValidateGenesis              = types.ValidateGenesis
-	GenesisStateFromGenDoc       = sdkgenutil.GenesisStateFromGenDoc
-	SetGenTxsInAppGenesisState   = sdkgenutil.SetGenTxsInAppGenesisState
-	ExportGenesisFile            = sdkgenutil.ExportGenesisFile
+	ModuleCdc                           = types.ModuleCdc
+	GenesisStateFromGenFile             = sdkgenutil.GenesisStateFromGenFile
+	NewGenesisState                     = sdkgenutil.NewGenesisState
+	SetGenesisStateInAppState           = sdkgenutil.SetGenesisStateInAppState
+	InitializeNodeValidatorFiles        = sdkgenutil.InitializeNodeValidatorFiles
+	ExportGenesisFileWithTime           = sdkgenutil.ExportGenesisFileWithTime
+	NewInitConfig                       = sdkgenutil.NewInitConfig
+	ValidateGenesis                     = types.ValidateGenesis
+	GenesisStateFromGenDoc              = sdkgenutil.GenesisStateFromGenDoc
+	SetGenTxsInAppGenesisState          = sdkgenutil.SetGenTxsInAppGenesisState
+	ExportGenesisFile                   = sdkgenutil.ExportGenesisFile
+	InitializeNodeValidatorFilesByIndex = sdkgenutil.InitializeNodeValidatorFilesByIndex
 )

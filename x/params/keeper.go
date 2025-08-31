@@ -1,9 +1,9 @@
 package params
 
 import (
-	"github.com/cosmos/cosmos-sdk/codec"
-	sdk "github.com/cosmos/cosmos-sdk/types"
-	sdkparams "github.com/cosmos/cosmos-sdk/x/params"
+	"github.com/okex/exchain/libs/cosmos-sdk/codec"
+	sdk "github.com/okex/exchain/libs/cosmos-sdk/types"
+	sdkparams "github.com/okex/exchain/libs/cosmos-sdk/x/params"
 
 	"github.com/okex/exchain/x/params/types"
 )
@@ -19,14 +19,16 @@ type Keeper struct {
 	// the reference to the CoinKeeper to modify balances
 	ck BankKeeper
 	// the reference to the GovKeeper to insert waiting queue
-	gk GovKeeper
+	gk      GovKeeper
+	signals []func()
 }
 
 // NewKeeper creates a new instance of params keeper
 func NewKeeper(cdc *codec.Codec, key *sdk.KVStoreKey, tkey *sdk.TransientStoreKey) (
 	k Keeper) {
 	k = Keeper{
-		Keeper: sdkparams.NewKeeper(cdc, key, tkey),
+		Keeper:  sdkparams.NewKeeper(cdc, key, tkey),
+		signals: make([]func(), 0),
 	}
 	k.cdc = cdc
 	k.paramSpace = k.Subspace(DefaultParamspace).WithKeyTable(types.ParamKeyTable())

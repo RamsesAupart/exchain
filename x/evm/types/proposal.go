@@ -4,7 +4,9 @@ import (
 	"fmt"
 	"strings"
 
-	sdk "github.com/cosmos/cosmos-sdk/types"
+	sdk "github.com/okex/exchain/libs/cosmos-sdk/types"
+	"github.com/okex/exchain/libs/tendermint/global"
+	"github.com/okex/exchain/libs/tendermint/types"
 	govtypes "github.com/okex/exchain/x/gov/types"
 )
 
@@ -14,18 +16,28 @@ const (
 	proposalTypeManageContractDeploymentWhitelist = "ManageContractDeploymentWhitelist"
 	// proposalTypeManageContractBlockedList defines the type for a ManageContractBlockedListProposal
 	proposalTypeManageContractBlockedList = "ManageContractBlockedList"
+	// proposalTypeManageContractMethodBlockedList defines the type for a ManageContractMethodBlockedList
+	proposalTypeManageContractMethodBlockedList = "ManageContractMethodBlockedList"
+	// proposalTypeManageSysContractAddress defines the type for a ManageSysContractAddress
+	proposalTypeManageSysContractAddress = "ManageSysContractAddress"
 )
 
 func init() {
 	govtypes.RegisterProposalType(proposalTypeManageContractDeploymentWhitelist)
 	govtypes.RegisterProposalType(proposalTypeManageContractBlockedList)
+	govtypes.RegisterProposalType(proposalTypeManageContractMethodBlockedList)
+	govtypes.RegisterProposalType(proposalTypeManageSysContractAddress)
 	govtypes.RegisterProposalTypeCodec(ManageContractDeploymentWhitelistProposal{}, "okexchain/evm/ManageContractDeploymentWhitelistProposal")
 	govtypes.RegisterProposalTypeCodec(ManageContractBlockedListProposal{}, "okexchain/evm/ManageContractBlockedListProposal")
+	govtypes.RegisterProposalTypeCodec(ManageContractMethodBlockedListProposal{}, "okexchain/evm/ManageContractMethodBlockedListProposal")
+	govtypes.RegisterProposalTypeCodec(ManageSysContractAddressProposal{}, "okexchain/evm/ManageSysContractAddressProposal")
 }
 
 var (
 	_ govtypes.Content = (*ManageContractDeploymentWhitelistProposal)(nil)
 	_ govtypes.Content = (*ManageContractBlockedListProposal)(nil)
+	_ govtypes.Content = (*ManageContractMethodBlockedListProposal)(nil)
+	_ govtypes.Content = (*ManageSysContractAddressProposal)(nil)
 )
 
 // ManageContractDeploymentWhitelistProposal - structure for the proposal to add or delete deployer addresses from whitelist
@@ -237,5 +249,207 @@ func (mp ManageContractBlockedListProposal) String() string {
 		builder.Write([]byte{'\n'})
 	}
 
+	return strings.TrimSpace(builder.String())
+}
+
+// ManageContractMethodBlockedListProposal - structure for the proposal to add or delete a contract method from blocked list
+type ManageContractMethodBlockedListProposal struct {
+	Title        string              `json:"title" yaml:"title"`
+	Description  string              `json:"description" yaml:"description"`
+	ContractList BlockedContractList `json:"contract_addresses" yaml:"contract_addresses"`
+	IsAdded      bool                `json:"is_added" yaml:"is_added"`
+}
+
+// NewManageContractMethodBlockedListProposal creates a new instance of ManageContractMethodBlockedListProposal
+func NewManageContractMethodBlockedListProposal(title, description string, contractList BlockedContractList, isAdded bool,
+) ManageContractMethodBlockedListProposal {
+	return ManageContractMethodBlockedListProposal{
+		Title:        title,
+		Description:  description,
+		ContractList: contractList,
+		IsAdded:      isAdded,
+	}
+}
+
+// GetTitle returns title of a manage contract blocked list proposal object
+func (mp ManageContractMethodBlockedListProposal) GetTitle() string {
+	return mp.Title
+}
+
+// GetDescription returns description of a manage contract blocked list proposal object
+func (mp ManageContractMethodBlockedListProposal) GetDescription() string {
+	return mp.Description
+}
+
+// ProposalRoute returns route key of a manage contract blocked list proposal object
+func (mp ManageContractMethodBlockedListProposal) ProposalRoute() string {
+	return RouterKey
+}
+
+// ProposalType returns type of a manage contract blocked list proposal object
+func (mp ManageContractMethodBlockedListProposal) ProposalType() string {
+	return proposalTypeManageContractMethodBlockedList
+}
+
+// ValidateBasic validates a manage contract blocked list proposal
+func (mp ManageContractMethodBlockedListProposal) ValidateBasic() sdk.Error {
+	if len(strings.TrimSpace(mp.Title)) == 0 {
+		return govtypes.ErrInvalidProposalContent("title is required")
+	}
+	if len(mp.Title) > govtypes.MaxTitleLength {
+		return govtypes.ErrInvalidProposalContent("title length is longer than the maximum title length")
+	}
+
+	if len(mp.Description) == 0 {
+		return govtypes.ErrInvalidProposalContent("description is required")
+	}
+
+	if len(mp.Description) > govtypes.MaxDescriptionLength {
+		return govtypes.ErrInvalidProposalContent("description length is longer than the maximum description length")
+	}
+
+	if mp.ProposalType() != proposalTypeManageContractMethodBlockedList {
+		return govtypes.ErrInvalidProposalType(mp.ProposalType())
+	}
+
+	contractAddrLen := len(mp.ContractList)
+	if contractAddrLen == 0 {
+		return ErrEmptyAddressList
+	}
+
+	if contractAddrLen > maxAddressListLength {
+		return ErrOversizeAddrList(contractAddrLen)
+	}
+
+	if err := mp.ContractList.ValidateBasic(); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// String returns a human readable string representation of a ManageContractMethodBlockedListProposal
+func (mp ManageContractMethodBlockedListProposal) String() string {
+	var builder strings.Builder
+	builder.WriteString(
+		fmt.Sprintf(`ManageContractMethodBlockedListProposal:
+ Title:					%s
+ Description:        	%s
+ Type:                	%s
+ IsAdded:				%t
+ ContractList:
+`,
+			mp.Title, mp.Description, mp.ProposalType(), mp.IsAdded),
+	)
+
+	for i := 0; i < len(mp.ContractList); i++ {
+		builder.WriteString("\t\t\t\t\t\t")
+		builder.WriteString(mp.ContractList[i].String())
+		builder.Write([]byte{'\n'})
+	}
+
+	return strings.TrimSpace(builder.String())
+}
+
+// FixShortAddr is to fix the short address problem in the OKC test-net.
+// The normal len(BlockedContract.Address) should be 20,
+// but there are some BlockedContract.Address in OKC test-net that have a length of 4.
+// The fix is to pad the leading bits of the short address with zeros until the length is 20.
+func (mp *ManageContractMethodBlockedListProposal) FixShortAddr() {
+	for i := 0; i < len(mp.ContractList); i++ {
+		if len(mp.ContractList[i].Address) < 20 {
+			validAddress := make([]byte, 20-len(mp.ContractList[i].Address), 20)
+			validAddress = append(validAddress, mp.ContractList[i].Address...)
+			mp.ContractList[i].Address = validAddress
+		}
+	}
+}
+
+type ManageSysContractAddressProposal struct {
+	Title       string `json:"title" yaml:"title"`
+	Description string `json:"description" yaml:"description"`
+	// Contract Address
+	ContractAddr sdk.AccAddress `json:"contract_address" yaml:"contract_address"`
+	IsAdded      bool           `json:"is_added" yaml:"is_added"`
+}
+
+// NewManageSysContractAddressProposal creates a new instance of NewManageSysContractAddressProposal
+func NewManageSysContractAddressProposal(title, description string, addr sdk.AccAddress, isAdded bool,
+) ManageSysContractAddressProposal {
+	return ManageSysContractAddressProposal{
+		Title:        title,
+		Description:  description,
+		ContractAddr: addr,
+		IsAdded:      isAdded,
+	}
+}
+
+// GetTitle returns title of a manage system contract address proposal object
+func (mp ManageSysContractAddressProposal) GetTitle() string {
+	return mp.Title
+}
+
+// GetDescription returns description of a manage system contract address proposal object
+func (mp ManageSysContractAddressProposal) GetDescription() string {
+	return mp.Description
+}
+
+// ProposalRoute returns route key of a manage system contract address proposal object
+func (mp ManageSysContractAddressProposal) ProposalRoute() string {
+	return RouterKey
+}
+
+// ProposalType returns type of a manage system contract address proposal object
+func (mp ManageSysContractAddressProposal) ProposalType() string {
+	return proposalTypeManageSysContractAddress
+}
+
+// ValidateBasic validates a manage system contract address proposal
+func (mp ManageSysContractAddressProposal) ValidateBasic() sdk.Error {
+	//will delete it after upgrade venus3
+	if global.GetGlobalHeight() > 0 && !types.HigherThanVenus3(global.GetGlobalHeight()) {
+		return govtypes.ErrInvalidProposalContent("not support system contract address proposal")
+	}
+
+	if len(strings.TrimSpace(mp.Title)) == 0 {
+		return govtypes.ErrInvalidProposalContent("title is required")
+	}
+
+	if len(mp.Title) > govtypes.MaxTitleLength {
+		return govtypes.ErrInvalidProposalContent("title length is longer than the maximum title length")
+	}
+
+	if len(mp.Description) == 0 {
+		return govtypes.ErrInvalidProposalContent("description is required")
+	}
+
+	if len(mp.Description) > govtypes.MaxDescriptionLength {
+		return govtypes.ErrInvalidProposalContent("description length is longer than the maximum description length")
+	}
+
+	if mp.ProposalType() != proposalTypeManageSysContractAddress {
+		return govtypes.ErrInvalidProposalType(mp.ProposalType())
+	}
+
+	if mp.IsAdded && mp.ContractAddr.Empty() {
+		return govtypes.ErrInvalidProposalContent("is_added true, contract address required")
+	}
+
+	return nil
+}
+
+// String returns a human readable string representation of a ManageSysContractAddressProposal
+func (mp ManageSysContractAddressProposal) String() string {
+	var builder strings.Builder
+	builder.WriteString(
+		fmt.Sprintf(`ManageSysContractAddressProposal:
+ Title:					%s
+ Description:        	%s
+ Type:                	%s
+ ContractAddr:          %s
+ IsAdded:				%t
+`,
+			mp.Title, mp.Description, mp.ProposalType(), mp.ContractAddr.String(), mp.IsAdded),
+	)
 	return strings.TrimSpace(builder.String())
 }

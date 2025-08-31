@@ -1,14 +1,15 @@
 package exported
 
 import (
-	sdk "github.com/cosmos/cosmos-sdk/types"
-	"github.com/tendermint/tendermint/crypto"
+	sdk "github.com/okex/exchain/libs/cosmos-sdk/types"
+	"github.com/okex/exchain/libs/tendermint/crypto"
 )
 
 // DelegatorI expected delegator functions
 type DelegatorI interface {
 	GetShareAddedValidatorAddresses() []sdk.ValAddress
 	GetLastAddedShares() sdk.Dec
+	GetDelegatorAddress() sdk.AccAddress
 }
 
 // ValidatorI expected validator functions

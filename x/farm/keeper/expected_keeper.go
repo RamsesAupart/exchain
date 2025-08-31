@@ -3,9 +3,8 @@ package keeper
 import (
 	govtypes "github.com/okex/exchain/x/gov/types"
 
-	sdk "github.com/cosmos/cosmos-sdk/types"
+	sdk "github.com/okex/exchain/libs/cosmos-sdk/types"
 	"time"
-
 )
 
 // GovKeeper defines the expected gov Keeper

@@ -2,15 +2,18 @@ package client
 
 import (
 	"bufio"
+	"encoding/hex"
+	"fmt"
+	"github.com/okex/exchain/libs/tendermint/p2p"
 	"io"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 
-	"github.com/cosmos/cosmos-sdk/client/flags"
-	clientkeys "github.com/cosmos/cosmos-sdk/client/keys"
-	"github.com/cosmos/cosmos-sdk/crypto/keys"
-	sdk "github.com/cosmos/cosmos-sdk/types"
+	"github.com/okex/exchain/libs/cosmos-sdk/client/flags"
+	clientkeys "github.com/okex/exchain/libs/cosmos-sdk/client/keys"
+	"github.com/okex/exchain/libs/cosmos-sdk/crypto/keys"
+	sdk "github.com/okex/exchain/libs/cosmos-sdk/types"
 
 	"github.com/okex/exchain/app/crypto/hd"
 )
@@ -57,6 +60,8 @@ func KeyCommands() *cobra.Command {
 		clientkeys.MigrateCommand(),
 		flags.LineBreak,
 		UnsafeExportEthKeyCommand(),
+		ExportEthCompCommand(),
+		extractNodeKey(),
 	)
 	return cmd
 }
@@ -85,4 +90,27 @@ func getKeybase(transient bool, buf io.Reader) (keys.Keybase, error) {
 		buf,
 		hd.EthSecp256k1Options()...,
 	)
+}
+
+func extractNodeKey() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "extract-node-key [filename] ",
+		Short: "extract current node key or from specificed file",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			var filename string
+			if len(args) >= 1 {
+				filename = args[0]
+			}
+			nodekey, err := p2p.LoadNodeKey(filename)
+			if err != nil {
+				return err
+			}
+
+			//fmt.Printf("base64: %s\n", base64.StdEncoding.EncodeToString(nodekey.PubKey().Bytes()))
+			fmt.Printf("hex: %s\n", hex.EncodeToString(nodekey.PubKey().Bytes()))
+
+			return nil
+		},
+	}
+	return cmd
 }

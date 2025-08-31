@@ -6,29 +6,43 @@ import (
 	"os"
 	"strings"
 
-	sdk "github.com/cosmos/cosmos-sdk/types"
-	"github.com/spf13/viper"
-
-	"github.com/cosmos/cosmos-sdk/client/flags"
-	"github.com/cosmos/cosmos-sdk/client/input"
-	"github.com/cosmos/cosmos-sdk/client/lcd"
-	"github.com/cosmos/cosmos-sdk/crypto/keys"
-	cmserver "github.com/cosmos/cosmos-sdk/server"
 	"github.com/ethereum/go-ethereum/rpc"
 	"github.com/okex/exchain/app/crypto/ethsecp256k1"
 	"github.com/okex/exchain/app/crypto/hd"
+	"github.com/okex/exchain/app/rpc/nacos"
+	"github.com/okex/exchain/app/rpc/pendingtx"
 	"github.com/okex/exchain/app/rpc/websockets"
+	"github.com/okex/exchain/libs/cosmos-sdk/client/flags"
+	"github.com/okex/exchain/libs/cosmos-sdk/client/input"
+	"github.com/okex/exchain/libs/cosmos-sdk/client/lcd"
+	"github.com/okex/exchain/libs/cosmos-sdk/crypto/keys"
+	cmserver "github.com/okex/exchain/libs/cosmos-sdk/server"
+	sdk "github.com/okex/exchain/libs/cosmos-sdk/types"
+	"github.com/okex/exchain/libs/tendermint/libs/log"
+
+	"github.com/spf13/viper"
 )
 
 const (
-	flagUnlockKey = "unlock-key"
-	flagWebsocket = "wsport"
-
-	FlagPersonalAPI    = "personal-api"
-	FlagRateLimitApi   = "rpc.rate-limit-api"
-	FlagRateLimitCount = "rpc.rate-limit-count"
-	FlagRateLimitBurst = "rpc.rate-limit-burst"
-	FlagEnableMonitor  = "rpc.enable-monitor"
+	flagUnlockKey             = "unlock-key"
+	FlagWebsocket             = "wsport"
+	FlagPersonalAPI           = "personal-api"
+	FlagDebugAPI              = "debug-api"
+	FlagRateLimitAPI          = "rpc.rate-limit-api"
+	FlagRateLimitCount        = "rpc.rate-limit-count"
+	FlagRateLimitBurst        = "rpc.rate-limit-burst"
+	FlagEnableMonitor         = "rpc.enable-monitor"
+	FlagDisableAPI            = "rpc.disable-api"
+	FlagKafkaAddr             = "pendingtx.kafka-addr"
+	FlagKafkaTopic            = "pendingtx.kafka-topic"
+	FlagNacosTmrpcUrls        = "rpc.tmrpc_nacos_urls"
+	FlagNacosTmrpcNamespaceID = "rpc.tmrpc_nacos_namespace_id"
+	FlagNacosTmrpcAppName     = "rpc.tmrpc_application_name"
+	FlagRpcExternalAddr       = "rpc.external_laddr"
+	FlagRestApplicationName   = "rest.application_name"
+	FlagRestNacosUrls         = "rest.nacos_urls"
+	FlagRestNacosNamespaceId  = "rest.nacos_namespace_id"
+	FlagExternalListenAddr    = "rest.external_laddr"
 
 	MetricsNamespace = "x"
 	// MetricsSubsystem is a subsystem shared by all metrics exposed by this package.
@@ -40,6 +54,9 @@ const (
 // RegisterRoutes creates a new server and registers the `/rpc` endpoint.
 // Rpc calls are enabled based on their associated module (eg. "eth").
 func RegisterRoutes(rs *lcd.RestServer) {
+	// register nacos first
+	registerNacos(rs.Logger())
+
 	server := rpc.NewServer()
 	accountName := viper.GetString(cmserver.FlagUlockKey)
 	accountNames := strings.Split(accountName, ",")
@@ -83,9 +100,18 @@ func RegisterRoutes(rs *lcd.RestServer) {
 	rs.Mux.HandleFunc("/", server.ServeHTTP).Methods("POST", "OPTIONS")
 
 	// start websockets server
-	websocketAddr := viper.GetString(flagWebsocket)
+	websocketAddr := viper.GetString(FlagWebsocket)
 	ws := websockets.NewServer(rs.CliCtx, rs.Logger(), websocketAddr)
 	ws.Start()
+
+	// pending tx watcher
+	kafkaAddrs := viper.GetString(FlagKafkaAddr)
+	kafkaTopic := viper.GetString(FlagKafkaTopic)
+	if kafkaAddrs != "" && kafkaTopic != "" {
+		kafkaClient := pendingtx.NewKafkaClient(strings.Split(kafkaAddrs, ","), kafkaTopic)
+		ptw := pendingtx.NewWatcher(rs.CliCtx, rs.Logger(), kafkaClient)
+		ptw.Start()
+	}
 }
 
 func unlockKeyFromNameAndPassphrase(accountNames []string, passphrase string) ([]ethsecp256k1.PrivKey, error) {
@@ -119,4 +145,25 @@ func unlockKeyFromNameAndPassphrase(accountNames []string, passphrase string) ([
 	}
 
 	return keys, nil
+}
+
+func registerNacos(logger log.Logger) {
+	nacosUrls := viper.GetString(FlagRestNacosUrls)
+	nacosNamespaceId := viper.GetString(FlagRestNacosNamespaceId)
+	applicationName := viper.GetString(FlagRestApplicationName)
+	externalAddr := viper.GetString(FlagExternalListenAddr)
+
+	// start nacos client for registering restful service
+	if nacosUrls != "" {
+		nacos.StartNacosClient(logger, nacosUrls, nacosNamespaceId, applicationName, externalAddr)
+	}
+
+	nacosTmRpcUrls := viper.GetString(FlagNacosTmrpcUrls)
+	nacosTmRpcNamespaceID := viper.GetString(FlagNacosTmrpcNamespaceID)
+	nacosTmRpcAppName := viper.GetString(FlagNacosTmrpcAppName)
+	rpcExternalAddr := viper.GetString(FlagRpcExternalAddr)
+	// start nacos client for tmrpc service
+	if nacosTmRpcUrls != "" {
+		nacos.StartNacosClient(logger, nacosTmRpcUrls, nacosTmRpcNamespaceID, nacosTmRpcAppName, rpcExternalAddr)
+	}
 }
